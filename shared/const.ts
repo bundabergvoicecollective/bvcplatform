@@ -4,8 +4,14 @@
 
 /**
  * Name of the session cookie set by the auth routes.
- * Must be "__session": Firebase Hosting (used for the custom domain in front of
- * Cloud Run) strips every other cookie before forwarding requests.
+ *
+ * Named "__session" because Firebase Hosting — which was briefly planned to
+ * front Cloud Run for a custom domain — strips every other cookie before
+ * forwarding a request. That plan was dropped (it needs a paid Firebase plan;
+ * the site is served from its run.app URL instead), but the name is kept: it
+ * costs nothing, and it leaves the option of putting a CDN in front later
+ * without signing everybody out a second time. Renaming this invalidates every
+ * existing session.
  */
 export const COOKIE_NAME = "__session";
 
