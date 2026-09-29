@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Express } from "express";
+import sirv from "sirv";
 import type { Server } from "node:http";
 
 const ROOT = path.resolve(import.meta.dirname ?? __dirname, "..");
@@ -32,6 +33,5 @@ export function serveStatic(app: Express): void {
     return;
   }
 
-  const { default: sirv } = require("sirv");
   app.use(sirv(DIST_PUBLIC, { extensions: ["html"], single: true }));
 }
