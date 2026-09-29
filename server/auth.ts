@@ -66,7 +66,7 @@ function buildResetEmail(name: string, link: string, firstTime: boolean) {
   return { subject, html, text };
 }
 
-const COOKIE_NAME = "bvc_session";
+import { COOKIE_NAME } from "@shared/const";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days in seconds
 
 function cookieOptions(maxAge: number) {
