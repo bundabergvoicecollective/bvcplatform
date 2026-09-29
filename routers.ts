@@ -379,7 +379,7 @@ const coreRouter = router({
             const members = await getAllMembers();
             const member = members.find((m) => m.id === input.userId);
             if (member?.email) {
-              const { sendEmail } = await import("./_core/email");
+              const { sendEmail } = await import("./email");
               const subject = `🎁 You've been gifted ${sessionCount} free ${sessionWord} — Bundaberg Voice Collective`;
               const html = `
 <!DOCTYPE html>
@@ -578,7 +578,7 @@ const coreRouter = router({
               )
             );
             // Email the member
-            const { sendEmail } = await import("./_core/email");
+            const { sendEmail } = await import("./email");
             if (member?.email) {
               await sendEmail({
                 to: member.email,
@@ -1989,7 +1989,7 @@ const invitesRouter = router({
       const inviteUrl = `${input.origin}/invite/${token}`;
 
       // Send the invite email
-      const { sendEmail, buildInviteEmail } = await import("./_core/email");
+      const { sendEmail, buildInviteEmail } = await import("./email");
       const emailContent = buildInviteEmail(inviteUrl, expiresAt);
       const emailSent = await sendEmail({ to: input.email, ...emailContent });
 
@@ -2038,7 +2038,7 @@ const invitesRouter = router({
       await saveInviteOtp(input.token, code, codeExpiresAt);
 
       // Send the verification code email
-      const { sendEmail } = await import("./_core/email");
+      const { sendEmail } = await import("./email");
       const fromName = process.env.EMAIL_FROM_NAME || "Bundaberg Voice Collective";
       await sendEmail({
         to: invite.email,
