@@ -1,3 +1,4 @@
+import { COOKIE_NAME } from "@shared/const";
 /**
  * Server-side helper for reading the JWT cookie from an Express request.
  * Used by upload routes and other non-tRPC handlers.
@@ -15,7 +16,7 @@ export async function getRequestUser(req: Request): Promise<User | null> {
   try {
     const rawCookies = req.headers.cookie ?? "";
     const cookies = parse(rawCookies);
-    const token = cookies["bvc_session"];
+    const token = cookies[COOKIE_NAME];
     if (!token || !ENV.cookieSecret) return null;
 
     const secret = new TextEncoder().encode(ENV.cookieSecret);

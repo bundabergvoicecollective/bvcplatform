@@ -2,8 +2,12 @@
  * Shared constants used by both client and server.
  */
 
-/** Name of the session cookie set by the auth routes. */
-export const COOKIE_NAME = "bvc_session";
+/**
+ * Name of the session cookie set by the auth routes.
+ * Must be "__session": Firebase Hosting (used for the custom domain in front of
+ * Cloud Run) strips every other cookie before forwarding requests.
+ */
+export const COOKIE_NAME = "__session";
 
 // Error messages used by tRPC middleware and client
 export const UNAUTHED_ERR_MSG = "You must be signed in to do that.";

@@ -1,3 +1,4 @@
+import { COOKIE_NAME } from "@shared/const";
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../drizzle/schema";
 import { jwtVerify } from "jose";
@@ -21,7 +22,7 @@ export async function createContext(
   try {
     const rawCookies = opts.req.headers.cookie ?? "";
     const cookies = cookie.parse(rawCookies);
-    const token = cookies["bvc_session"];
+    const token = cookies[COOKIE_NAME];
 
     if (token && ENV.cookieSecret) {
       const secret = new TextEncoder().encode(ENV.cookieSecret);

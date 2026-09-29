@@ -378,6 +378,19 @@ export const inviteTokens = mysqlTable("invite_tokens", {
 export type InviteToken = typeof inviteTokens.$inferSelect;
 export type InsertInviteToken = typeof inviteTokens.$inferInsert;
 
+// ─── Password resets / first-time password setup ─────────────────────────────
+// Stores only a SHA-256 hash of the emailed token; tokens are single-use and short-lived.
+
+export const passwordResets = mysqlTable("password_resets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type PasswordReset = typeof passwordResets.$inferSelect;
+
 // ─── BVC Shop ─────────────────────────────────────────────────────────────────
 
 export const shopProducts = mysqlTable("shop_products", {

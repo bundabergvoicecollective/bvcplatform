@@ -16,6 +16,12 @@ env:
   DB_PORT: "4000"
   DB_USER: 3JSdBrsm7qtoEPs.root
   DB_NAME: bvc
+  # Origin used to build emailed password set-up / reset links. Must be set:
+  # without it the link is built from the request's Host header, so a forged
+  # header would send a member a real token pointing at someone else's domain.
+  # Change to https://members.bundabergvoicecollective.com.au once Firebase
+  # Hosting serves that domain, or set an APP_URL secret to override.
+  APP_URL: ${{ secrets.APP_URL || 'https://bvc-production-aoxblokwyq-ts.a.run.app' }}
 
 jobs:
   deploy:
@@ -111,7 +117,7 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json, os
-          keys = ["DATABASE_URL","JWT_SECRET","OWNER_OPEN_ID","VAPID_PUBLIC_KEY","VITE_VAPID_PUBLIC_KEY",
+          keys = ["DATABASE_URL","APP_URL","JWT_SECRET","OWNER_OPEN_ID","VAPID_PUBLIC_KEY","VITE_VAPID_PUBLIC_KEY",
                   "VAPID_PRIVATE_KEY","R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY",
                   "R2_PUBLIC_URL","SMTP_PASS","SQUARE_ENVIRONMENT","SQUARE_ACCESS_TOKEN",
                   "SQUARE_LOCATION_ID","SQUARE_WEBHOOK_SIGNATURE_KEY","SQUARE_WEBHOOK_URL"]
