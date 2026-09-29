@@ -25,5 +25,7 @@ export const ENV = {
   squareAccessToken: process.env.SQUARE_ACCESS_TOKEN ?? "",
   squareWebhookSignatureKey: process.env.SQUARE_WEBHOOK_SIGNATURE_KEY ?? "",
   squareWebhookUrl: process.env.SQUARE_WEBHOOK_URL ?? "",
-  squareEnvironment: (process.env.SQUARE_ENVIRONMENT ?? "sandbox") as "sandbox" | "production",
+  // Defaults to production: the BVC Square account is live, so an unset
+  // variable must not silently route real payments at the sandbox API.
+  squareEnvironment: (process.env.SQUARE_ENVIRONMENT ?? "production") as "sandbox" | "production",
 };
