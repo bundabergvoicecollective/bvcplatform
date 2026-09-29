@@ -11,6 +11,11 @@ env:
   REGION: australia-southeast1
   SERVICE: bvc-production
   REGISTRY: australia-southeast1-docker.pkg.dev
+  # TiDB connection details (not secret; the password is the DB_PASSWORD secret)
+  DB_HOST: gateway01.ap-southeast-1.prod.aws.tidbcloud.com
+  DB_PORT: "4000"
+  DB_USER: 3JSdBrsm7qtoEPs.root
+  DB_NAME: bvc
 
 jobs:
   deploy:
@@ -18,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: deploy-group
     env:
-      HAS_DB: ${{ secrets.DATABASE_URL != '' }}
+      HAS_DB: ${{ secrets.DATABASE_URL != '' || secrets.DB_PASSWORD != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +48,26 @@ jobs:
       - name: Database not configured yet
         if: env.HAS_DB != 'true'
         run: |
-          echo "::warning::DATABASE_URL secret is not set. Image built and pushed, but not deployed (the app cannot start without a database)."
+          echo "::warning::No DB_PASSWORD (or DATABASE_URL) secret is set. Image built and pushed, but not deployed (the app cannot start without a database)."
+
+      - name: Resolve database URL
+        if: env.HAS_DB == 'true'
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import os, urllib.parse
+          url = os.environ.get("DATABASE_URL_SECRET", "").strip()
+          if not url:
+              pw = urllib.parse.quote(os.environ["DB_PASSWORD"].strip(), safe="")
+              url = (f"mysql://{os.environ['DB_USER']}:{pw}@{os.environ['DB_HOST']}:"
+                     f"{os.environ['DB_PORT']}/{os.environ['DB_NAME']}"
+                     '?ssl={"rejectUnauthorized":true}')
+          print(f"::add-mask::{url}")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"DATABASE_URL={url}\n")
+          EOF
 
       - uses: pnpm/action-setup@v4
         if: env.HAS_DB == 'true'
@@ -58,8 +82,6 @@ jobs:
 
       - name: Apply database schema
         if: env.HAS_DB == 'true'
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           pnpm install --frozen-lockfile
           pnpm exec drizzle-kit push
@@ -69,7 +91,6 @@ jobs:
       - name: Build runtime env file
         if: env.HAS_DB == 'true'
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
