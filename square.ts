@@ -1,12 +1,18 @@
 import { SquareClient, SquareEnvironment, WebhooksHelper } from "square";
 import type { Currency } from "square";
+import { ENV } from "./_core/env";
 
-// Always use production — this is a live Square account
 const accessToken = process.env.SQUARE_ACCESS_TOKEN ?? "";
 
+// The BVC Square account is live, so SQUARE_ENVIRONMENT defaults to
+// production (see _core/env.ts). Set it to "sandbox" to test against
+// sandbox credentials without touching real payments.
 export const squareClient = new SquareClient({
   token: accessToken,
-  environment: SquareEnvironment.Production,
+  environment:
+    ENV.squareEnvironment === "sandbox"
+      ? SquareEnvironment.Sandbox
+      : SquareEnvironment.Production,
 });
 
 export const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID ?? "";
