@@ -19,7 +19,13 @@ export default function Login() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Login failed");
+      if (!res.ok) {
+        if (data.code === "NO_PASSWORD") {
+          navigate(`/forgot-password?email=${encodeURIComponent(email)}`);
+          return;
+        }
+        throw new Error(data.error ?? "Login failed");
+      }
       navigate("/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -73,6 +79,10 @@ export default function Login() {
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
+        <div className="rounded-md border border-input px-4 py-3 text-sm text-center">
+          <span className="font-medium">First time on the new site?</span>{" "}
+          <a href="/forgot-password" className="text-primary underline">Set up / forgot password</a>
+        </div>
         <p className="text-center text-sm text-muted-foreground">
           Don't have an account?{" "}
           <a href="/register" className="text-primary underline">Register</a>
