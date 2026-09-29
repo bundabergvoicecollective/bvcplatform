@@ -1284,7 +1284,7 @@ const coreRouter = router({
         const allOrders = await getAllPassOrders();
         const order = allOrders.find((o) => o.id === input.orderId);
         if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found" });
-        if (order.status === "paid") throw new TRPCError({ code: "BADE_REQUEST", message: "Order already paid" });
+        if (order.status === "paid") throw new TRPCError({ code: "BAD_REQUEST", message: "Order already paid" });
         const existingPass = await getActivePassForUser(order.userId);
         let finalPass;
         if (existingPass) {
