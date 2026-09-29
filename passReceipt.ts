@@ -9,6 +9,12 @@ type ReceiptOpts = {
   passType: string;
   sessionCount: number;
   amountCents: number;
+  /** ISO currency code; defaults to AUD. */
+  currency?: string | null;
+  /** Square payment/session id, or a BVC-<orderId> fallback. */
+  paymentReference?: string | null;
+  /** When the purchase completed; defaults to now. */
+  purchasedAt?: Date | null;
 };
 
 /**
@@ -29,8 +35,17 @@ export function shouldIssueOnlinePassReceipt(order: {
 export async function sendOnlinePassReceipt(opts: ReceiptOpts): Promise<boolean> {
   const { to, memberName, passType, sessionCount, amountCents } = opts;
   const dollars = (amountCents / 100).toFixed(2);
+  const currency = (opts.currency || "AUD").toUpperCase();
   const passLabel = passType.replace(/-/g, " ");
   const sessionWord = sessionCount === 1 ? "session" : "sessions";
+  const purchasedAt = opts.purchasedAt ?? new Date();
+  const purchasedLabel = purchasedAt.toLocaleDateString("en-AU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Australia/Brisbane",
+  });
+  const reference = opts.paymentReference || "";
 
   const subject = `🎟 Your BVC pass receipt — ${passLabel}`;
 
@@ -52,8 +67,16 @@ export async function sendOnlinePassReceipt(opts: ReceiptOpts): Promise<boolean>
       <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${sessionCount} ${sessionWord}</td>
     </tr>
     <tr>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">Date</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${purchasedLabel}</td>
+    </tr>${reference ? `
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">Reference</td>
+      <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${reference}</td>
+    </tr>` : ""}
+    <tr>
       <td style="padding:8px;font-weight:600;">Amount paid</td>
-      <td style="padding:8px;">AUD $${dollars}</td>
+      <td style="padding:8px;">${currency} $${dollars}</td>
     </tr>
   </table>
   <p>Your sessions have been added to your account. We look forward to seeing you at rehearsal!</p>
@@ -64,7 +87,7 @@ export async function sendOnlinePassReceipt(opts: ReceiptOpts): Promise<boolean>
 </body>
 </html>`;
 
-  const text = `Hi ${memberName},\n\nThank you for your purchase!\n\nPass: ${passLabel}\nSessions: ${sessionCount} ${sessionWord}\nAmount: AUD $${dollars}\n\nYour sessions have been added to your account. See you at rehearsal!\n\n— Bundaberg Voice Collective`;
+  const text = `Hi ${memberName},\n\nThank you for your purchase!\n\nPass: ${passLabel}\nSessions: ${sessionCount} ${sessionWord}\nDate: ${purchasedLabel}${reference ? `\nReference: ${reference}` : ""}\nAmount: ${currency} $${dollars}\n\nYour sessions have been added to your account. See you at rehearsal!\n\n— Bundaberg Voice Collective`;
 
   return sendEmail({ to, subject, html, text });
 }

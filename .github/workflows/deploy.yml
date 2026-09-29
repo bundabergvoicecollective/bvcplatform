@@ -28,6 +28,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Docker build uses esbuild, which strips types without checking them.
+      # Without this step type errors ship straight to production.
+      - name: Typecheck
+        run: pnpm run check
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -69,20 +84,9 @@ jobs:
               f.write(f"DATABASE_URL={url}\n")
           EOF
 
-      - uses: pnpm/action-setup@v4
-        if: env.HAS_DB == 'true'
-
-      - uses: actions/setup-node@v4
-        if: env.HAS_DB == 'true'
-        with:
-          node-version: 22
-          cache: pnpm
-
       - name: Apply database schema
         if: env.HAS_DB == 'true'
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm exec drizzle-kit push
+        run: pnpm exec drizzle-kit push
 
       # Only non-empty values are passed, so unset secrets fall back to the
       # app's built-in defaults (see _core/env.ts).
@@ -90,6 +94,7 @@ jobs:
         if: env.HAS_DB == 'true'
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          OWNER_OPEN_ID: ${{ secrets.OWNER_OPEN_ID }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
@@ -106,7 +111,7 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json, os
-          keys = ["DATABASE_URL","JWT_SECRET","VAPID_PUBLIC_KEY","VITE_VAPID_PUBLIC_KEY",
+          keys = ["DATABASE_URL","JWT_SECRET","OWNER_OPEN_ID","VAPID_PUBLIC_KEY","VITE_VAPID_PUBLIC_KEY",
                   "VAPID_PRIVATE_KEY","R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY",
                   "R2_PUBLIC_URL","SMTP_PASS","SQUARE_ENVIRONMENT","SQUARE_ACCESS_TOKEN",
                   "SQUARE_LOCATION_ID","SQUARE_WEBHOOK_SIGNATURE_KEY","SQUARE_WEBHOOK_URL"]

@@ -2,6 +2,9 @@ export const ENV = {
   cookieSecret: process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
   isProduction: process.env.NODE_ENV === "production",
+  // openId of the account auto-promoted to admin on first sign-in
+  // (format: "email:<address>"). Unset means no auto-promotion.
+  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   // Cloudflare R2
   r2AccountId: process.env.R2_ACCOUNT_ID ?? "",
   r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? "",
