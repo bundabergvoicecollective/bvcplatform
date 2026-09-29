@@ -17,8 +17,7 @@
     "paths": {
       "@/*": ["./client/*"],
       "@shared/*": ["./shared/*"]
-    },
-    "baseUrl": "."
+    }
   },
   "include": ["client", "server", "shared", "drizzle"],
   "exclude": ["node_modules", "dist"]
