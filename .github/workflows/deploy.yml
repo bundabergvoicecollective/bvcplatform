@@ -17,6 +17,8 @@ jobs:
     name: Deploy to Cloud Run
     runs-on: ubuntu-latest
     concurrency: deploy-group
+    env:
+      HAS_DB: ${{ secrets.DATABASE_URL != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,9 +40,34 @@ jobs:
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
+      - name: Database not configured yet
+        if: env.HAS_DB != 'true'
+        run: |
+          echo "::warning::DATABASE_URL secret is not set. Image built and pushed, but not deployed (the app cannot start without a database)."
+
+      - uses: pnpm/action-setup@v4
+        if: env.HAS_DB == 'true'
+        with:
+          version: 10.4.1
+
+      - uses: actions/setup-node@v4
+        if: env.HAS_DB == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Apply database schema
+        if: env.HAS_DB == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec drizzle-kit push
+
       # Only non-empty values are passed, so unset secrets fall back to the
       # app's built-in defaults (see _core/env.ts).
       - name: Build runtime env file
+        if: env.HAS_DB == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -76,6 +103,7 @@ jobs:
           EOF
 
       - name: Deploy to Cloud Run
+        if: env.HAS_DB == 'true'
         run: |
           IMAGE="${REGISTRY}/${PROJECT_ID}/bvc/${SERVICE}:${GITHUB_SHA}"
           gcloud run deploy "$SERVICE" \
