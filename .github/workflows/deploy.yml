@@ -1,26 +1,93 @@
-name: Deploy to Fly.io
+name: Deploy to Cloud Run
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: australia-southeast1
+  SERVICE: bvc-production
+  REGISTRY: australia-southeast1-docker.pkg.dev
 
 jobs:
   deploy:
-    name: Deploy app
+    name: Deploy to Cloud Run
     runs-on: ubuntu-latest
     concurrency: deploy-group
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Create app if it doesn't exist
-        run: flyctl apps create bvc-production 2>/dev/null || true
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${REGISTRY}/${PROJECT_ID}/bvc/${SERVICE}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      # Only non-empty values are passed, so unset secrets fall back to the
+      # app's built-in defaults (see _core/env.ts).
+      - name: Build runtime env file
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SQUARE_ENVIRONMENT: ${{ secrets.SQUARE_ENVIRONMENT }}
+          SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
+          SQUARE_LOCATION_ID: ${{ secrets.SQUARE_LOCATION_ID }}
+          SQUARE_WEBHOOK_SIGNATURE_KEY: ${{ secrets.SQUARE_WEBHOOK_SIGNATURE_KEY }}
+          SQUARE_WEBHOOK_URL: ${{ secrets.SQUARE_WEBHOOK_URL }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          keys = ["DATABASE_URL","JWT_SECRET","VAPID_PUBLIC_KEY","VITE_VAPID_PUBLIC_KEY",
+                  "VAPID_PRIVATE_KEY","R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY",
+                  "R2_PUBLIC_URL","SMTP_PASS","SQUARE_ENVIRONMENT","SQUARE_ACCESS_TOKEN",
+                  "SQUARE_LOCATION_ID","SQUARE_WEBHOOK_SIGNATURE_KEY","SQUARE_WEBHOOK_URL"]
+          env = {"NODE_ENV": "production", "R2_BUCKET_NAME": "bvc-storage"}
+          for k in keys:
+              v = os.environ.get(k, "").strip()
+              if v:
+                  env[k] = v
+          with open("/tmp/env.yaml", "w") as f:
+              for k, v in env.items():
+                  f.write(f"{k}: {json.dumps(v)}\n")
+          print("Runtime vars set:", ", ".join(sorted(env)))
+          EOF
+
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE="${REGISTRY}/${PROJECT_ID}/bvc/${SERVICE}:${GITHUB_SHA}"
+          gcloud run deploy "$SERVICE" \
+            --image="$IMAGE" \
+            --region="$REGION" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --memory=512Mi \
+            --cpu=1 \
+            --env-vars-file=/tmp/env.yaml \
+            --quiet
+          echo "URL: $(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')"
