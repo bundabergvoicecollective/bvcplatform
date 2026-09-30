@@ -153,21 +153,9 @@ jobs:
             --quiet
           echo "URL: $(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')"
 
-      # Every deploy pushes a SHA-tagged image and nothing removed the old ones,
-      # so the repository grew past Artifact Registry's 0.5 GB free tier. Keep
-      # the five most recent and drop the rest. Never fails the build: the
-      # deploy has already succeeded by this point.
-      - name: Prune old images
-        if: env.HAS_DB == 'true'
-        continue-on-error: true
-        run: |
-          IMAGE_PATH="${REGISTRY}/${PROJECT_ID}/bvc/${SERVICE}"
-          gcloud artifacts docker images list "$IMAGE_PATH" \
-            --sort-by=~CREATE_TIME --format='value(version)' 2>/dev/null \
-            | tail -n +6 \
-            | while read -r digest; do
-                [ -n "$digest" ] || continue
-                echo "Deleting $digest"
-                gcloud artifacts docker images delete "${IMAGE_PATH}@${digest}" \
-                  --delete-tags --quiet || true
-              done
+      # Old images are NOT pruned here. The github-deploy service account has
+      # no artifactregistry.tags.delete, so a per-deploy delete only produced a
+      # wall of PERMISSION_DENIED that buried the rest of the log. Retention is
+      # handled by a cleanup policy on the "bvc" repository instead, which runs
+      # server-side and needs no permissions from CI:
+      #   Artifact Registry -> bvc -> Cleanup policies -> keep the 5 most recent
