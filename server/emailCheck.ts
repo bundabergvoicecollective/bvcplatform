@@ -140,10 +140,23 @@ export function registerEmailCheck(app: Express) {
         // A failure reading password_resets is itself the likely answer: the
         // same table /api/auth/forgot inserts into before sending, where the
         // error is swallowed and the member is told a link is on its way.
+        //
+        // Drizzle wraps driver errors, and its wrapper carries only the SQL and
+        // params — no code, no errno. The cause underneath is the mysql2 error
+        // that actually names the problem (ER_NO_SUCH_TABLE and friends), so
+        // report that rather than the wrapper alone.
+        const cause = (err as { cause?: unknown })?.cause as
+          | { code?: string; errno?: number; sqlState?: string; sqlMessage?: string; message?: string }
+          | undefined;
         return res.status(500).json({
           stoppedAt: "query error",
           error: err instanceof Error ? err.message : String(err),
-          code: (err as { code?: string })?.code,
+          cause: cause && {
+            code: cause.code,
+            errno: cause.errno,
+            sqlState: cause.sqlState,
+            message: cause.sqlMessage ?? cause.message,
+          },
           detail: "Reading password_resets threw. If this says the table is missing, that is also why no reset email sends: /api/auth/forgot inserts a row there before calling sendEmail, catches the failure, and still answers that a link is on its way.",
         });
       }

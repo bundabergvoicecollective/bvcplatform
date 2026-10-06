@@ -19,6 +19,6 @@
       "@shared/*": ["./shared/*"]
     }
   },
-  "include": ["client", "server", "shared", "drizzle"],
+  "include": ["client", "server", "shared", "drizzle", "scripts"],
   "exclude": ["node_modules", "dist"]
 }

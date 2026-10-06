@@ -14,7 +14,18 @@ pnpm run start            # node dist/index.js, expects NODE_ENV=production
 
 There is no test suite. `vitest` is installed but nothing uses it, so `pnpm run check` plus a real build is the only automated signal. Do not claim tests pass.
 
-Schema changes go out through the deploy workflow, which runs `drizzle-kit push` against the live database. `pnpm run db:push` (generate + migrate) exists but is not what production uses.
+Schema changes go out through the deploy workflow, which runs `scripts/dbSchema.ts` against the live database — **not** `drizzle-kit push`, for the reason under "`drizzle-kit push` cannot be used unattended" below. The reconciler is additive only: it creates missing tables, adds missing columns, and adds a declared `UNIQUE` index once it has proved the column holds no duplicates. It never drops, truncates, renames or retypes. Anything destructive is a deliberate local `pnpm exec drizzle-kit push` with someone there to answer the prompts.
+
+To run it by hand (report-only without `--apply`, so it is safe to point at production):
+
+```bash
+rm -rf /tmp/bvc-schema-sql
+pnpm exec drizzle-kit generate --name=baseline --out=/tmp/bvc-schema-sql \
+  --schema=./drizzle/schema.ts --dialect=mysql
+DATABASE_URL=... pnpm exec tsx scripts/dbSchema.ts --from=/tmp/bvc-schema-sql/0000_baseline.sql
+```
+
+The expected shape comes from `drizzle-kit generate` into a throwaway directory, never a committed `.sql` file (`drizzle/migrations/` is gitignored), so `drizzle/schema.ts` cannot drift from what gets applied. Passing `--out` on the command line makes drizzle-kit ignore `drizzle.config.ts`, which is why `--schema` and `--dialect` have to be repeated.
 
 ## Architecture
 
@@ -38,9 +49,11 @@ Schema changes go out through the deploy workflow, which runs `drizzle-kit push`
 
 ## Things that have cost real time here
 
+**`drizzle-kit push` cannot be used unattended, and fails without saying so.** It was the deploy workflow's schema step for weeks. Once the schema declared its first `UNIQUE` constraint on a table that already held rows, push stopped to ask `· You're about to add invite_tokens_token_unique unique constraint to the table, which contains 99 items. Do you want to truncate invite_tokens table?`, hit `Error: Interactive prompts require a TTY terminal`, printed the stack — and **exited 0**. So every deploy from that day on reported a successful schema apply and applied nothing. The visible symptom was three steps away: `password_resets` had never been created, so `/api/auth/forgot` threw on the rate-limit `SELECT` it runs before sending, swallowed the error by design, and told all 76 passwordless members a reset link was on its way. Nothing arrived, ever. If a schema change seems not to have landed, read the deploy log's schema step rather than trusting its green tick.
+
 **Types are not checked by the build.** `esbuild` strips TypeScript without checking it, so type errors ship happily. Ten had accumulated on `main` before CI gained a `pnpm run check` step, one of which broke every request the front end made. That step runs before the image is built — keep it there.
 
-**`tsconfig.json`'s `include` covers `client`, `server`, `shared` and `drizzle` only.** Root modules are typechecked only because included files import them. A new root file nothing imports is invisible to `tsc`.
+**`tsconfig.json`'s `include` covers `client`, `server`, `shared`, `drizzle` and `scripts` only.** Root modules are typechecked only because included files import them. A new root file nothing imports is invisible to `tsc`.
 
 **Deployment is Cloud Run in `australia-southeast1`, via `.github/workflows/deploy.yml` on push to `main`.** The site is served from its `run.app` URL. Firebase Hosting was tried and removed: its Cloud Run rewrite needs a paid plan, and `australia-southeast1` offers no Cloud Run domain mapping. A GoDaddy redirect provides a friendly link, which is why `APP_URL` and any webhook URL must stay the `run.app` host — a redirect drops the path and query string.
 

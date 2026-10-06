@@ -93,9 +93,21 @@ jobs:
               f.write(f"DATABASE_URL={url}\n")
           EOF
 
+      # Not `drizzle-kit push`: it stops on an interactive prompt ("you are about
+      # to add invite_tokens_token_unique ... do you want to truncate?"), reports
+      # the absent TTY, and then exits 0. Every deploy from the day the schema
+      # gained its first unique constraint reported success while applying
+      # nothing, which is why password_resets did not exist. The reconciler is
+      # non-interactive, additive only, and exits non-zero when a statement
+      # fails. Destructive changes — drops, renames, retypes — stay a deliberate
+      # local `pnpm exec drizzle-kit push`, with someone watching the prompts.
       - name: Apply database schema
         if: env.HAS_DB == 'true'
-        run: pnpm exec drizzle-kit push
+        run: |
+          rm -rf /tmp/bvc-schema-sql
+          pnpm exec drizzle-kit generate --name=baseline --out=/tmp/bvc-schema-sql \
+            --schema=./drizzle/schema.ts --dialect=mysql
+          pnpm exec tsx scripts/dbSchema.ts --from=/tmp/bvc-schema-sql/0000_baseline.sql --apply
 
       # Only non-empty values are passed, so unset secrets fall back to the
       # app's built-in defaults (see _core/env.ts).
