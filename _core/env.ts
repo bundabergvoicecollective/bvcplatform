@@ -2,6 +2,10 @@ export const ENV = {
   cookieSecret: process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
   isProduction: process.env.NODE_ENV === "production",
+  // Public origin of the deployed site, e.g. https://example.run.app. Used to
+  // build emailed invite and password links so they never depend on the
+  // request's Host header or on the sender's browser.
+  appUrl: process.env.APP_URL ?? "",
   // openId of the account auto-promoted to admin on first sign-in
   // (format: "email:<address>"). Unset means no auto-promotion.
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",

@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { ENV } from "./_core/env";
 import { createSquarePaymentLink, getSquareOrderStatus } from "./_core/square";
 import { COOKIE_NAME, getDisplayName } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -1986,7 +1987,12 @@ const invitesRouter = router({
         expiresAt,
       });
 
-      const inviteUrl = `${input.origin}/invite/${token}`;
+      // Prefer the server's own configured origin so every invite carries the
+      // same URL regardless of which admin sent it, or what host their browser
+      // happened to be on. Falls back to the client's origin for local dev,
+      // where APP_URL is usually unset.
+      const origin = (ENV.appUrl || input.origin).replace(/\/$/, "");
+      const inviteUrl = `${origin}/invite/${token}`;
 
       // Send the invite email
       const { sendEmail, buildInviteEmail } = await import("./email");
