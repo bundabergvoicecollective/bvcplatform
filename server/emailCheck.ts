@@ -24,12 +24,12 @@ import { COOKIE_NAME } from "@shared/const";
 import { ENV } from "../_core/env";
 import { db } from "../db";
 import { users } from "../drizzle/schema";
-import { verifyEmailTransport } from "../email";
+import { sendEmailVerbose, verifyEmailTransport } from "../email";
 
 /** Mirrors _core/auth-helper.ts, but reports why it refused rather than null. */
 async function describeRequestUser(
   req: Request,
-): Promise<{ ok: true; role: string } | { ok: false; reason: string }> {
+): Promise<{ ok: true; role: string; email: string | null } | { ok: false; reason: string }> {
   const rawCookies = req.headers.cookie ?? "";
   if (!rawCookies) return { ok: false, reason: "The request carried no cookies at all." };
 
@@ -61,7 +61,7 @@ async function describeRequestUser(
     return { ok: false, reason: `Signed in as user ${userId}, but role is "${user.role}", not "admin".` };
   }
 
-  return { ok: true, role: user.role };
+  return { ok: true, role: user.role, email: user.email };
 }
 
 export function registerEmailCheck(app: Express) {
@@ -72,6 +72,36 @@ export function registerEmailCheck(app: Express) {
     }
 
     const pass = ENV.smtpPass;
+
+    // ?send=1 posts a real message, because verify() only proves the
+    // connection and login work — it never exercises the send itself, which is
+    // where a rejected sender or a blocked recipient actually surfaces. It goes
+    // only to the signed-in admin's own address, so this cannot be used to send
+    // mail to anyone else.
+    if (req.query.send === "1") {
+      if (!who.email) {
+        return res.json({ sent: false, error: "Your account has no email address on it." });
+      }
+      const stamp = new Date().toISOString();
+      const sent = await sendEmailVerbose({
+        to: who.email,
+        subject: `BVC email test — ${stamp}`,
+        html: `<p>This is a test from the BVC members site.</p><p>Sent ${stamp}.</p>`,
+        text: `This is a test from the BVC members site.\n\nSent ${stamp}.`,
+      });
+      return res.json({
+        sent: sent.ok,
+        to: who.email,
+        messageId: sent.messageId,
+        response: sent.response,
+        error: sent.error,
+        from: ENV.smtpFrom,
+        hint: sent.ok
+          ? "Accepted by the provider. If it does not arrive, it was dropped after acceptance — check the provider's own logs and your spam folder."
+          : "The provider rejected the message. The error above is its own wording.",
+      });
+    }
+
     const result = await verifyEmailTransport();
 
     return res.json({
