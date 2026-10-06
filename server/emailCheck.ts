@@ -19,11 +19,11 @@
 import type { Express, Request } from "express";
 import { jwtVerify } from "jose";
 import { parse } from "cookie";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
 import { ENV } from "../_core/env";
 import { db } from "../db";
-import { users } from "../drizzle/schema";
+import { passwordResets, users } from "../drizzle/schema";
 import { sendEmailVerbose, verifyEmailTransport } from "../email";
 
 /** Mirrors _core/auth-helper.ts, but reports why it refused rather than null. */
@@ -72,6 +72,68 @@ export function registerEmailCheck(app: Express) {
     }
 
     const pass = ENV.smtpPass;
+
+    // ?forgot=1 walks the same branches as POST /api/auth/forgot for the
+    // signed-in admin's own address, and says which one it lands on. That
+    // endpoint answers identically whichever way it goes — deliberately, so it
+    // cannot be used to discover who is a member — which also means a silent
+    // skip is indistinguishable from a sent email. Nothing is sent here.
+    if (req.query.forgot === "1") {
+      const now = new Date();
+      const email = (who.email ?? "").toLowerCase().trim();
+      const [user] = email
+        ? await db.select().from(users).where(eq(users.email, email)).limit(1)
+        : [];
+
+      if (!user) {
+        return res.json({
+          wouldSend: false,
+          stoppedAt: "user lookup",
+          detail: `No user row matches "${email}". /api/auth/forgot returns its generic answer here and sends nothing.`,
+        });
+      }
+      if (user.status === "denied") {
+        return res.json({
+          wouldSend: false,
+          stoppedAt: "status check",
+          detail: `User ${user.id} has status "denied", which is skipped silently.`,
+        });
+      }
+
+      const cutoff = new Date(now.getTime() - 2 * 60 * 1000);
+      const [blocking] = await db
+        .select()
+        .from(passwordResets)
+        .where(and(
+          eq(passwordResets.userId, user.id),
+          isNull(passwordResets.usedAt),
+          gt(passwordResets.createdAt, cutoff),
+        ))
+        .limit(1);
+
+      const latest = await db
+        .select()
+        .from(passwordResets)
+        .where(eq(passwordResets.userId, user.id))
+        .orderBy(desc(passwordResets.createdAt))
+        .limit(5);
+
+      return res.json({
+        wouldSend: !blocking,
+        stoppedAt: blocking ? "rate limit" : null,
+        detail: blocking
+          ? "An unused reset row counts as recent, so the request is skipped without sending. Compare its createdAt with serverNow below: if it is not actually within the last two minutes, the stored timestamps and the server clock disagree."
+          : "All three checks pass, so a real request would insert a token and send.",
+        serverNow: now.toISOString(),
+        rateLimitCutoff: cutoff.toISOString(),
+        blockingRow: blocking
+          ? { createdAt: blocking.createdAt, expiresAt: blocking.expiresAt, usedAt: blocking.usedAt }
+          : null,
+        user: { id: user.id, status: user.status, hasPassword: Boolean(user.passwordHash) },
+        resetRowCount: latest.length,
+        recentRows: latest.map((r) => ({ createdAt: r.createdAt, usedAt: r.usedAt, expiresAt: r.expiresAt })),
+      });
+    }
 
     // ?send=1 posts a real message, because verify() only proves the
     // connection and login work — it never exercises the send itself, which is
