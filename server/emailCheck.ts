@@ -22,7 +22,7 @@ import { parse } from "cookie";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
 import { ENV } from "../_core/env";
-import { db } from "../db";
+import { db, sameEmail } from "../db";
 import { passwordResets, users } from "../drizzle/schema";
 import { sendEmailVerbose, verifyEmailTransport } from "../email";
 import { asyncRoute } from "./asyncRoute";
@@ -74,6 +74,91 @@ export function registerEmailCheck(app: Express) {
 
     const pass = ENV.smtpPass;
 
+    // ?emails=1 audits how addresses are actually stored, across every member
+    // at once. Lookups normalise both sides now, so a stored address that is
+    // not already lowercase and trimmed no longer locks anyone out — but it is
+    // still worth seeing, and the collisions below are a real problem whatever
+    // the lookups do.
+    if (req.query.emails === "1") {
+      const [collationRows] = (await db.execute(
+        sql`select collation_name as collation from information_schema.columns
+             where table_schema = database() and table_name = 'users' and column_name = 'email'`,
+      )) as unknown as [{ collation: string | null }[]];
+
+      // Whether comparisons on this column ignore case, asked rather than
+      // assumed from which engine this is. Comparing the column against an
+      // expression derived from it settles it, because the column's own
+      // collation governs — where a bare 'a' = 'A' would only reveal the
+      // connection's.
+      //
+      //   equalsOwnUppercase  `email = upper(email)` under the column collation.
+      //                       A _ci collation makes this true for every row; a
+      //                       binary one only for rows holding no lowercase.
+      //   hasLowercase        the same question answered byte-wise, via CAST AS
+      //                       BINARY, so it is true regardless of collation.
+      //                       (UPPER of a binary string is a no-op, so the cast
+      //                       has to be outside it, not inside.)
+      //
+      // Case-insensitive therefore means equalsOwnUppercase == nonEmpty, and
+      // only tells us anything when hasLowercase > 0.
+      const [counts] = (await db.execute(
+        sql`select count(*) as total,
+                   sum(email is null or email = '') as missing,
+                   sum(email is not null and email <> '') as nonEmpty,
+                   sum(email is not null and email <> lower(trim(email))) as notNormalised,
+                   sum(email is not null and email <> '' and email = upper(email)) as equalsOwnUppercase,
+                   sum(email is not null and email <> ''
+                       and cast(email as binary) <> cast(upper(email) as binary)) as hasLowercase
+              from users`,
+      )) as unknown as [
+        {
+          total: number;
+          missing: number | null;
+          nonEmpty: number | null;
+          notNormalised: number | null;
+          equalsOwnUppercase: number | null;
+          hasLowercase: number | null;
+        }[],
+      ];
+      const nonEmpty = Number(counts?.[0]?.nonEmpty ?? 0);
+      const withLowercase = Number(counts?.[0]?.hasLowercase ?? 0);
+      const matchedUpper = Number(counts?.[0]?.equalsOwnUppercase ?? 0);
+
+      const oddRows = await db
+        .select({ id: users.id, email: users.email, status: users.status, name: users.name })
+        .from(users)
+        .where(sql`${users.email} is not null and ${users.email} <> lower(trim(${users.email}))`)
+        .limit(100);
+
+      // Two member rows on one real address. The duplicate checks compared
+      // exactly before this change, so registering again under a different
+      // casing would have created a second account — and passes and attendance
+      // stay on whichever row they were written to.
+      // `rowCount`, not `rows` — ROWS is reserved in MySQL 8.
+      const [duplicates] = (await db.execute(
+        sql`select lower(trim(email)) as address, count(*) as rowCount,
+                   group_concat(id order by id) as ids
+              from users
+             where email is not null and email <> ''
+             group by lower(trim(email))
+            having count(*) > 1`,
+      )) as unknown as [{ address: string; rowCount: number; ids: string }[]];
+
+      return res.json({
+        emailCollation: collationRows?.[0]?.collation,
+        // null when no stored address holds a lowercase letter, since then the
+        // test cannot distinguish the two collations.
+        comparisonIsCaseInsensitive: withLowercase > 0 ? matchedUpper === nonEmpty : null,
+        total: Number(counts?.[0]?.total ?? 0),
+        missingEmail: Number(counts?.[0]?.missing ?? 0),
+        notNormalised: Number(counts?.[0]?.notNormalised ?? 0),
+        notNormalisedRows: oddRows,
+        duplicateAddresses: duplicates ?? [],
+        detail:
+          "notNormalised counts members whose stored address is not already lowercase and trimmed. duplicateAddresses is the one to act on: two member rows sharing a real address, which splits that person's passes and attendance across both. Lookups now ignore case and whitespace, so neither locks anyone out of signing in.",
+      });
+    }
+
     // ?forgot=1 walks the same branches as POST /api/auth/forgot and says which
     // one it lands on. That endpoint answers identically whichever way it goes
     // — deliberately, so it cannot be used to discover who is a member — which
@@ -87,38 +172,16 @@ export function registerEmailCheck(app: Express) {
       const now = new Date();
       const asked = typeof req.query.email === "string" ? req.query.email : who.email ?? "";
       const email = asked.toLowerCase().trim();
-      const [user] = email
-        ? await db.select().from(users).where(eq(users.email, email)).limit(1)
-        : [];
+      // Uses the same matcher as /api/auth/forgot, so this reports what that
+      // endpoint would really do rather than a second opinion.
+      const [user] = email ? await db.select().from(users).where(sameEmail(email)).limit(1) : [];
 
       if (!user) {
-        // /api/auth/forgot matches the address exactly, against a lowercased
-        // input. TiDB's default collation is utf8mb4_bin, which is case
-        // sensitive — unlike MySQL 8's — so a row imported as
-        // "Mclucas.Andy@gmail.com" would never be found by that lookup, and the
-        // member would be told a link was on its way forever. Check for that
-        // case specifically rather than reporting a bare "no such member".
-        const loose = await db
-          .select({ id: users.id, email: users.email, status: users.status })
-          .from(users)
-          .where(sql`lower(trim(${users.email})) = ${email}`)
-          .limit(5);
-        // Reported so the case-sensitivity question is answered by the server
-        // rather than assumed from which database engine this is.
-        const [collationRows] = (await db.execute(
-          sql`select collation_name as collation from information_schema.columns
-               where table_schema = database() and table_name = 'users' and column_name = 'email'`,
-        )) as unknown as [{ collation: string | null }[]];
-
         return res.json({
           wouldSend: false,
           stoppedAt: "user lookup",
           lookedFor: email,
-          emailCollation: collationRows?.[0]?.collation,
-          caseInsensitiveMatches: loose.map((r) => ({ id: r.id, email: r.email, status: r.status })),
-          detail: loose.length
-            ? "No row matches that address exactly, but one does ignoring case and surrounding spaces — see caseInsensitiveMatches for how it is actually stored. /api/auth/forgot compares exactly, so it finds nothing, returns its generic answer and sends nothing. The stored address needs normalising, or the lookup needs to be case-insensitive."
-            : `No user row matches "${email}" under any casing. /api/auth/forgot returns its generic answer here and sends nothing — this address simply is not a member.`,
+          detail: `No member matches "${email}", ignoring case and surrounding whitespace. /api/auth/forgot returns its generic answer here and sends nothing — this address is not a member. Check ?emails=1 for how addresses are actually stored.`,
         });
       }
       if (user.status === "denied") {

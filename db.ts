@@ -54,6 +54,30 @@ export async function getDb() {
   return db;
 }
 
+/**
+ * Matches a member by email address, ignoring case and surrounding whitespace.
+ *
+ * Every write normalises the address before storing it, but the rows imported
+ * from Manus were not written by this code, and an address stored as
+ * "Mclucas.Andy@gmail.com" or with a stray leading space does not equal the
+ * lowercased, trimmed value a sign-in form produces. An exact comparison then
+ * fails in three places at once: the member cannot sign in, cannot get a reset
+ * link, and — worst — the duplicate checks in registration and admin
+ * member-creation miss them, so a second account gets made on the same real
+ * address with their pass and attendance history stranded on the first.
+ *
+ * Whether the collation makes the comparison case sensitive depends on the
+ * server (TiDB and MySQL differ on the default), which is exactly why this does
+ * not rely on it. Addresses are case-insensitive in practice regardless, so
+ * normalising both sides is the correct comparison either way, and it handles
+ * the whitespace case that no collation would.
+ *
+ * There is no index on users.email, so nothing is lost by wrapping the column.
+ */
+export function sameEmail(value: string) {
+  return sql`lower(trim(${users.email})) = ${value.toLowerCase().trim()}`;
+}
+
 // ─── Activity Log ────────────────────────────────────────────────────────────
 
 /**
@@ -1744,7 +1768,7 @@ export async function createManualMember(data: {
   const existing = await db
     .select()
     .from(users)
-    .where(eq(users.email, data.email.toLowerCase().trim()))
+    .where(sameEmail(data.email))
     .limit(1);
   if (existing.length > 0) throw new Error("A member with this email already exists");
   await db.insert(users).values({
