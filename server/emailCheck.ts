@@ -19,7 +19,7 @@
 import type { Express, Request } from "express";
 import { jwtVerify } from "jose";
 import { parse } from "cookie";
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
 import { ENV } from "../_core/env";
 import { db } from "../db";
@@ -74,24 +74,51 @@ export function registerEmailCheck(app: Express) {
 
     const pass = ENV.smtpPass;
 
-    // ?forgot=1 walks the same branches as POST /api/auth/forgot for the
-    // signed-in admin's own address, and says which one it lands on. That
-    // endpoint answers identically whichever way it goes — deliberately, so it
-    // cannot be used to discover who is a member — which also means a silent
-    // skip is indistinguishable from a sent email. Nothing is sent here.
+    // ?forgot=1 walks the same branches as POST /api/auth/forgot and says which
+    // one it lands on. That endpoint answers identically whichever way it goes
+    // — deliberately, so it cannot be used to discover who is a member — which
+    // also means a silent skip is indistinguishable from a sent email.
+    //
+    // &email= picks the address to walk, defaulting to the signed-in admin's
+    // own. An admin can already list every member, so naming one here reveals
+    // nothing new, and nothing is sent either way.
     if (req.query.forgot === "1") {
       try {
       const now = new Date();
-      const email = (who.email ?? "").toLowerCase().trim();
+      const asked = typeof req.query.email === "string" ? req.query.email : who.email ?? "";
+      const email = asked.toLowerCase().trim();
       const [user] = email
         ? await db.select().from(users).where(eq(users.email, email)).limit(1)
         : [];
 
       if (!user) {
+        // /api/auth/forgot matches the address exactly, against a lowercased
+        // input. TiDB's default collation is utf8mb4_bin, which is case
+        // sensitive — unlike MySQL 8's — so a row imported as
+        // "Mclucas.Andy@gmail.com" would never be found by that lookup, and the
+        // member would be told a link was on its way forever. Check for that
+        // case specifically rather than reporting a bare "no such member".
+        const loose = await db
+          .select({ id: users.id, email: users.email, status: users.status })
+          .from(users)
+          .where(sql`lower(trim(${users.email})) = ${email}`)
+          .limit(5);
+        // Reported so the case-sensitivity question is answered by the server
+        // rather than assumed from which database engine this is.
+        const [collationRows] = (await db.execute(
+          sql`select collation_name as collation from information_schema.columns
+               where table_schema = database() and table_name = 'users' and column_name = 'email'`,
+        )) as unknown as [{ collation: string | null }[]];
+
         return res.json({
           wouldSend: false,
           stoppedAt: "user lookup",
-          detail: `No user row matches "${email}". /api/auth/forgot returns its generic answer here and sends nothing.`,
+          lookedFor: email,
+          emailCollation: collationRows?.[0]?.collation,
+          caseInsensitiveMatches: loose.map((r) => ({ id: r.id, email: r.email, status: r.status })),
+          detail: loose.length
+            ? "No row matches that address exactly, but one does ignoring case and surrounding spaces — see caseInsensitiveMatches for how it is actually stored. /api/auth/forgot compares exactly, so it finds nothing, returns its generic answer and sends nothing. The stored address needs normalising, or the lookup needs to be case-insensitive."
+            : `No user row matches "${email}" under any casing. /api/auth/forgot returns its generic answer here and sends nothing — this address simply is not a member.`,
         });
       }
       if (user.status === "denied") {
@@ -126,6 +153,14 @@ export function registerEmailCheck(app: Express) {
         detail: blocking
           ? "An unused reset row counts as recent, so the request is skipped without sending. Compare its createdAt with serverNow below: if it is not actually within the last two minutes, the stored timestamps and the server clock disagree."
           : "All three checks pass, so a real request would insert a token and send.",
+        // A row from an earlier real attempt settles where the failure is: the
+        // insert comes immediately before sendEmail, so rows present with no
+        // email received means the send failed, not the database. Rows absent
+        // means no real request ever got this far.
+        wouldSendSubject: user.passwordHash
+          ? "Reset your BVC password"
+          : "Set your password for the new BVC members' site",
+        linkOrigin: ENV.appUrl || "(APP_URL unset — the link would be built from the request Host header)",
         serverNow: now.toISOString(),
         rateLimitCutoff: cutoff.toISOString(),
         blockingRow: blocking
