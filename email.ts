@@ -66,6 +66,29 @@ export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: str
 }
 
 /**
+ * Send an email and surface the real failure instead of swallowing it.
+ * sendEmail() returns false on error by design; this is for diagnostics, where
+ * the provider's own words are the whole point.
+ */
+export async function sendEmailVerbose(
+  opts: SendEmailOptions,
+): Promise<{ ok: boolean; messageId?: string; response?: string; error?: string }> {
+  if (!ENV.smtpPass) return { ok: false, error: "SMTP_PASS is not set" };
+  try {
+    const info = await createTransport().sendMail({
+      from: ENV.smtpFrom,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      text: opts.text,
+    });
+    return { ok: true, messageId: info.messageId, response: info.response };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
  * Build the invitation email sent when an admin invites a new member.
  */
 export function buildInviteEmail(inviteUrl: string, expiresAt: Date): { subject: string; html: string; text: string } {
