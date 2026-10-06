@@ -11,17 +11,64 @@
  * error from an SMTP connect + authenticate. It never returns the password:
  * only its length and whether it carries Resend's "re_" prefix, which is enough
  * to catch an empty, truncated or wrong-service value.
+ *
+ * The refusal path is deliberately specific too. A flat 403 says nothing about
+ * whether the cookie was missing, the token stale, or the role wrong, and
+ * guessing between those costs a round trip each time.
  */
-import type { Express } from "express";
+import type { Express, Request } from "express";
+import { jwtVerify } from "jose";
+import { parse } from "cookie";
+import { eq } from "drizzle-orm";
+import { COOKIE_NAME } from "@shared/const";
 import { ENV } from "../_core/env";
-import { getRequestUser } from "../_core/auth-helper";
+import { db } from "../db";
+import { users } from "../drizzle/schema";
 import { verifyEmailTransport } from "../email";
+
+/** Mirrors _core/auth-helper.ts, but reports why it refused rather than null. */
+async function describeRequestUser(
+  req: Request,
+): Promise<{ ok: true; role: string } | { ok: false; reason: string }> {
+  const rawCookies = req.headers.cookie ?? "";
+  if (!rawCookies) return { ok: false, reason: "The request carried no cookies at all." };
+
+  const token = parse(rawCookies)[COOKIE_NAME];
+  if (!token) {
+    const names = Object.keys(parse(rawCookies)).join(", ") || "none";
+    return { ok: false, reason: `No "${COOKIE_NAME}" cookie. Cookies present: ${names}.` };
+  }
+  if (!ENV.cookieSecret) return { ok: false, reason: "JWT_SECRET is not set on the server." };
+
+  let userId: unknown;
+  try {
+    const secret = new TextEncoder().encode(ENV.cookieSecret);
+    ({ payload: { userId } } = await jwtVerify(token, secret) as { payload: { userId: unknown } });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `Session cookie failed verification: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (typeof userId !== "number") {
+    return { ok: false, reason: `Session carried no numeric user id (got ${typeof userId}).` };
+  }
+
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) return { ok: false, reason: `No user row for id ${userId}.` };
+  if (user.role !== "admin") {
+    return { ok: false, reason: `Signed in as user ${userId}, but role is "${user.role}", not "admin".` };
+  }
+
+  return { ok: true, role: user.role };
+}
 
 export function registerEmailCheck(app: Express) {
   app.get("/api/admin/email-check", async (req, res) => {
-    const user = await getRequestUser(req);
-    if (!user || user.role !== "admin") {
-      return res.status(403).json({ error: "Admins only" });
+    const who = await describeRequestUser(req);
+    if (!who.ok) {
+      return res.status(403).json({ error: "Admins only", reason: who.reason });
     }
 
     const pass = ENV.smtpPass;
