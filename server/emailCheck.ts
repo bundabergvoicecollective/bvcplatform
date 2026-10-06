@@ -80,6 +80,7 @@ export function registerEmailCheck(app: Express) {
     // cannot be used to discover who is a member — which also means a silent
     // skip is indistinguishable from a sent email. Nothing is sent here.
     if (req.query.forgot === "1") {
+      try {
       const now = new Date();
       const email = (who.email ?? "").toLowerCase().trim();
       const [user] = email
@@ -134,6 +135,18 @@ export function registerEmailCheck(app: Express) {
         resetRowCount: latest.length,
         recentRows: latest.map((r) => ({ createdAt: r.createdAt, usedAt: r.usedAt, expiresAt: r.expiresAt })),
       });
+      } catch (err) {
+        // Admin-only, so the real message is far more use than a generic one.
+        // A failure reading password_resets is itself the likely answer: the
+        // same table /api/auth/forgot inserts into before sending, where the
+        // error is swallowed and the member is told a link is on its way.
+        return res.status(500).json({
+          stoppedAt: "query error",
+          error: err instanceof Error ? err.message : String(err),
+          code: (err as { code?: string })?.code,
+          detail: "Reading password_resets threw. If this says the table is missing, that is also why no reset email sends: /api/auth/forgot inserts a row there before calling sendEmail, catches the failure, and still answers that a link is on its way.",
+        });
+      }
     }
 
     // ?send=1 posts a real message, because verify() only proves the
