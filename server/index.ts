@@ -10,6 +10,7 @@ import { Readable } from "node:stream";
 import { verifySquareWebhook } from "../square";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerAuthRoutes } from "./auth";
+import { registerEmailCheck } from "./emailCheck";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "../_core/context";
@@ -277,6 +278,7 @@ async function startServer() {
 
   registerStorageProxy(app);
   registerAuthRoutes(app);
+  registerEmailCheck(app);
 
   // ── Multipart upload: Music Library ──────────────────────────────────────
   const memUpload = multer({

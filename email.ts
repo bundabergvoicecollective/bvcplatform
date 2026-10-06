@@ -50,6 +50,22 @@ export async function sendEmail(opts: SendEmailOptions): Promise<boolean> {
 }
 
 /**
+ * Check that the SMTP transport can connect and authenticate, without sending
+ * anything. sendEmail() deliberately swallows failures so /api/auth/forgot
+ * cannot be used to probe who is a member — which also means a misconfigured
+ * mailbox is invisible. This is the way to see the real reason.
+ */
+export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: string }> {
+  if (!ENV.smtpPass) return { ok: false, error: "SMTP_PASS is not set" };
+  try {
+    await createTransport().verify();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
  * Build the invitation email sent when an admin invites a new member.
  */
 export function buildInviteEmail(inviteUrl: string, expiresAt: Date): { subject: string; html: string; text: string } {
