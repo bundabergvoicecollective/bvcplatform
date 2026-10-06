@@ -11,7 +11,7 @@ import type { Express } from "express";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
-import { db } from "../db";
+import { db, sameEmail } from "../db";
 import { passwordResets, users } from "../drizzle/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
@@ -109,7 +109,7 @@ export function registerAuthRoutes(app: Express) {
       const normalizedEmail = email.toLowerCase().trim();
 
       // Check for duplicate
-      const [existing] = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
+      const [existing] = await db.select().from(users).where(sameEmail(normalizedEmail)).limit(1);
       if (existing) {
         const hint = existing.passwordHash
           ? "An account with this email already exists. Try signing in, or use \"Forgot password\"."
@@ -153,7 +153,7 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const normalizedEmail = email.toLowerCase().trim();
-      const [user] = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
+      const [user] = await db.select().from(users).where(sameEmail(normalizedEmail)).limit(1);
 
       if (user && !user.passwordHash) {
         return res.status(401).json({
@@ -190,7 +190,7 @@ export function registerAuthRoutes(app: Express) {
       const { email } = req.body as { email?: string };
       if (!email) return res.status(400).json({ error: "Email is required" });
       const normalizedEmail = email.toLowerCase().trim();
-      const [user] = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
+      const [user] = await db.select().from(users).where(sameEmail(normalizedEmail)).limit(1);
       if (!user || user.status === "denied") return res.json(generic);
 
       // Light rate limit: at most one live link per 2 minutes per member.
