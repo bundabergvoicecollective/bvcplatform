@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { verifySquareWebhook } from "../square";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { asyncRoute } from "./asyncRoute";
 import { registerAuthRoutes } from "./auth";
 import { registerEmailCheck } from "./emailCheck";
 import { registerStorageProxy } from "./storageProxy";
@@ -341,19 +342,6 @@ async function startServer() {
       void cleanUpRecordingChunks(upload);
     }
   };
-
-  // Express 4 does not catch a rejection from an async handler, and Node exits
-  // the process on an unhandled rejection — so one throwing request takes the
-  // whole service down for everyone, rather than failing just that request.
-  // Wrap any async handler in this.
-  const asyncRoute =
-    (handler: (req: express.Request, res: express.Response) => Promise<unknown>) =>
-    (req: express.Request, res: express.Response) => {
-      handler(req, res).catch((err) => {
-        console.error(`[Route] ${req.method} ${req.path} failed:`, err);
-        if (!res.headersSent) res.status(500).json({ error: "Something went wrong on our end." });
-      });
-    };
 
   const getRecordingUploadAdmin = async (req: express.Request, res: express.Response) => {
     const user = await getRequestUser(req);
