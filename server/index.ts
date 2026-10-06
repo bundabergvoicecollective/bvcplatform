@@ -342,6 +342,19 @@ async function startServer() {
     }
   };
 
+  // Express 4 does not catch a rejection from an async handler, and Node exits
+  // the process on an unhandled rejection — so one throwing request takes the
+  // whole service down for everyone, rather than failing just that request.
+  // Wrap any async handler in this.
+  const asyncRoute =
+    (handler: (req: express.Request, res: express.Response) => Promise<unknown>) =>
+    (req: express.Request, res: express.Response) => {
+      handler(req, res).catch((err) => {
+        console.error(`[Route] ${req.method} ${req.path} failed:`, err);
+        if (!res.headersSent) res.status(500).json({ error: "Something went wrong on our end." });
+      });
+    };
+
   const getRecordingUploadAdmin = async (req: express.Request, res: express.Response) => {
     const user = await getRequestUser(req);
     if (!user) {
@@ -361,7 +374,7 @@ async function startServer() {
     }
   };
 
-  app.post("/api/upload/recording/init", async (req, res) => {
+  app.post("/api/upload/recording/init", asyncRoute(async (req, res) => {
     const user = await getRecordingUploadAdmin(req, res);
     if (!user) return;
     expireRecordingUploadSessions();
@@ -400,7 +413,7 @@ async function startServer() {
       createdAt: Date.now(),
     });
     return res.status(201).json({ uploadId });
-  });
+  }));
 
   app.post("/api/upload/recording/chunk", recordingChunkUpload.single("chunk"), async (req, res) => {
     const temporaryFilePath = req.file?.path;
@@ -428,7 +441,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/upload/recording/complete", async (req, res) => {
+  app.post("/api/upload/recording/complete", asyncRoute(async (req, res) => {
     const uploadReference = `recording-${crypto.randomUUID().slice(0, 8)}`;
     res.setHeader("X-Upload-Reference", uploadReference);
     const user = await getRecordingUploadAdmin(req, res);
@@ -483,7 +496,7 @@ async function startServer() {
         reference: uploadReference,
       });
     }
-  });
+  }));
 
   app.post("/api/upload/library", memUpload.single("file"), async (req, res) => {
     try {
