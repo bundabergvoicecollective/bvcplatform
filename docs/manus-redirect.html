@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<!--
+  Redirect page for the old Manus site, https://bundavoice-k8a8akbx.manus.space/
+
+  Replace that app's landing page with this. It sends visitors — including
+  anyone opening a bookmark or a home-screen icon — to the new members site.
+
+  Two things this is not:
+
+  1. It is not a 301. manus.space is Manus's domain, not ours, so we cannot set
+     a real redirect status there; only Manus can. This is a meta refresh plus a
+     scripted navigation, which browsers follow just as happily from a bookmark.
+  2. It is not permanent. It exists only while the Manus app stays deployed.
+     Switch Manus off and this URL stops answering. Treat it as a window for
+     members to move across, and tell them the new address as well.
+
+  Before deploying, check the URL below is the one you want to keep. Point it at
+  members.bundabergvoicecollective.com.au once that subdomain answers — sending
+  members to the run.app host first and the subdomain later means redirecting
+  them twice.
+-->
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bundaberg Voice Collective — we've moved</title>
+  <meta name="robots" content="noindex" />
+
+  <!-- The redirect itself. The meta refresh covers browsers with JavaScript
+       off; the script below is faster and keeps the old URL out of history. -->
+  <meta http-equiv="refresh" content="0; url=https://members.bundabergvoicecollective.com.au/" />
+  <link rel="canonical" href="https://members.bundabergvoicecollective.com.au/" />
+
+  <style>
+    :root {
+      --navy: #0e1a2b;
+      --gold: #c9922a;
+      --cream: #f5f5f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+      background: var(--cream);
+      color: var(--navy);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    }
+    .card__head {
+      background: var(--navy);
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: bold;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    .card__head h1 {
+      margin: 0;
+      color: #fff;
+      font-size: 22px;
+    }
+    .card__body {
+      padding: 28px 24px;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .card__body p { margin: 0 0 18px; }
+    .btn {
+      display: block;
+      padding: 14px 20px;
+      border-radius: 8px;
+      background: var(--gold);
+      color: #fff;
+      font-weight: bold;
+      text-align: center;
+      text-decoration: none;
+    }
+    .note {
+      margin: 20px 0 0;
+      font-size: 13px;
+      color: #777;
+    }
+    .note code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="card__head">
+      <p class="eyebrow">Bundaberg Voice Collective</p>
+      <h1>We've moved</h1>
+    </div>
+    <div class="card__body">
+      <p>The members' site has a new home. You should be sent there automatically — if nothing happens, use the button below.</p>
+
+      <p><a class="btn" href="https://members.bundabergvoicecollective.com.au/">Go to the members' site</a></p>
+
+      <p class="note">
+        Please update your bookmark or home-screen shortcut to
+        <code>members.bundabergvoicecollective.com.au</code> — this old address
+        will stop working eventually.
+      </p>
+      <p class="note">
+        Signing in for the first time? Choose <strong>Set up / forgot password</strong>
+        on the sign-in page and we'll email you a link.
+      </p>
+    </div>
+  </main>
+
+  <script>
+    // replace() rather than assigning href, so the back button does not land
+    // the visitor on this page again and bounce them forward once more.
+    location.replace("https://members.bundabergvoicecollective.com.au/");
+  </script>
+</body>
+</html>

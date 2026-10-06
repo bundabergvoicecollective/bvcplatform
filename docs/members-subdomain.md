@@ -172,23 +172,29 @@ real.
 
 ## Redirecting the old Manus site
 
-Worth doing — a redirect is followed by a bookmark and by a home-screen icon, so
-members would not have to change anything. What is possible depends on what the
-old URL is:
+The old address is `https://bundavoice-k8a8akbx.manus.space/`, and the hostname
+decides what is possible: `manus.space` is Manus's domain, not ours. We cannot
+set a real 301 there, and no DNS record of ours can reach it. Only Manus can,
+through a redirect feature in their product or a support request.
 
-- **A Manus-hosted URL** (`…manus.space` or similar). You cannot set a true 301
-  without server control, but replacing the old app's landing page with a
-  redirect achieves the same thing for bookmarks. The catch: it only lives as
-  long as the Manus app does. Cancel Manus and the redirect dies with it, so
-  treat it as a grace period and still tell members the new address.
-- **A subdomain of `bundabergvoicecollective.com.au` pointed at Manus.** This is
-  the good case. Once the zone is on Cloudflare, a **Redirect Rule** gives a
-  genuine permanent 301 for free, and it keeps working after Manus is gone.
+What works instead: replace that app's landing page with `manus-redirect.html`
+in this folder. Browsers follow it from a bookmark or a home-screen icon just as
+they would a 301, so members do not have to change anything to get in.
 
-Point any redirect at `https://members.bundabergvoicecollective.com.au`, so set
-this subdomain up first — otherwise the bookmark gets sent to a URL that is
-about to change again.
+Two limits to hold in mind:
 
-A note on "permanent": browsers cache a 301 hard, and for a long time. If
-there is any chance the old URL gets reused for something else, use a 302.
-For retiring a dead site for good, 301 is right.
+- It lives only while the Manus app stays deployed. Switch Manus off and the URL
+  stops answering, redirect and all. So it buys members a window to move across;
+  it does not remove the need to tell them the new address.
+- If a member installed the old site to their home screen as a standalone app,
+  iOS may open the redirect in Safari rather than in that window. It still
+  works; they just want to re-add the new site to their home screen to get the
+  tidy version back.
+
+Deploy it **after** the subdomain answers, with the URL in that file pointing at
+`https://members.bundabergvoicecollective.com.au/`. Sending members to the
+`run.app` host now and the subdomain later redirects them twice.
+
+A note on "permanent": browsers cache a 301 hard and for a long time. For
+retiring a dead address for good that is what you want — but it is moot here,
+since this cannot be a 301 anyway.
