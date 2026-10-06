@@ -20,10 +20,12 @@ env:
   # without it the link is built from the request's Host header, so a forged
   # header would send a member a real token pointing at someone else's domain.
   #
-  # This stays the run.app URL. A GoDaddy redirect on
-  # members.bundabergvoicecollective.com.au only forwards visitors to the site
-  # root — it drops the path and query string, so a reset link pointing at it
-  # would lose its token. Only a real proxy or domain mapping could go here.
+  # Whatever goes here has to preserve the path and query string, or a reset
+  # link arrives with its token stripped. A GoDaddy domain forward does not —
+  # it only bounces visitors to the site root — so this needs a real proxy.
+  # See docs/members-domain.md: once bundabergvoicecollective.com is served
+  # through Cloudflare, set the APP_URL secret to that domain. Until then the
+  # fallback below keeps emailed links working on the run.app host.
   APP_URL: ${{ secrets.APP_URL || 'https://bvc-production-aoxblokwyq-ts.a.run.app' }}
 
 jobs:
