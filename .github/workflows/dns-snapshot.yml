@@ -1,0 +1,93 @@
+# Capture a domain's live DNS records, on demand.
+#
+# Written because GoDaddy's DNS page failed to load the zone file ("We're having
+# trouble loading your zone file"), which is the capture that protects the MX and
+# Resend TXT records during the Cloudflare move described in
+# docs/members-domain.md. This asks the authoritative nameservers directly, so it
+# does not depend on any registrar UI.
+#
+# IMPORTANT LIMITATION: DNS has no "list everything" query for the public — zone
+# transfers are refused. This asks for a fixed list of likely names, so it finds
+# what is asked for and nothing else. A record on an unusual name will be missed.
+# The registrar's own record list is still the authority; treat this as a
+# cross-check and a fallback, not a replacement.
+#
+# Entirely read-only, and everything it prints is public DNS data.
+name: DNS snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: Domain to snapshot
+        type: string
+        required: true
+        default: bundabergvoicecollective.com.au
+
+jobs:
+  snapshot:
+    name: Snapshot DNS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dig
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+
+      - name: Snapshot
+        env:
+          DOMAIN: ${{ inputs.domain }}
+        run: |
+          set -u
+          # Ask an authoritative nameserver where possible, so the answers are
+          # the zone's own rather than something a resolver cached.
+          NS=$(dig +short NS "$DOMAIN" | head -1)
+          SERVER=""
+          if [ -n "$NS" ]; then SERVER="@${NS}"; fi
+
+          echo "Domain      : $DOMAIN"
+          echo "Nameservers : $(dig +short NS "$DOMAIN" | tr '\n' ' ')"
+          echo "Asking      : ${SERVER:-(default resolver)}"
+          echo
+
+          show() { # show <type> <name>
+            local type="$1" name="$2" out
+            out=$(dig +short $SERVER "$type" "$name" 2>/dev/null | sed '/^$/d')
+            if [ -n "$out" ]; then
+              echo "--- $type  $name"
+              echo "$out" | sed 's/^/    /'
+              echo
+            fi
+          }
+
+          echo "=============== APEX ==============="
+          for t in SOA NS A AAAA MX TXT CAA; do show "$t" "$DOMAIN"; done
+
+          echo "=============== NAMES ==============="
+          # Common hostnames, plus the ones a mail or verification setup uses.
+          for label in www mail email smtp imap pop webmail autodiscover autoconfig \
+                       ftp cpanel shop store blog app api members portal m \
+                       send bounce mailer track links em feedback; do
+            for t in A AAAA CNAME MX TXT; do show "$t" "${label}.${DOMAIN}"; done
+          done
+
+          echo "=============== MAIL POLICY & DKIM ==============="
+          # DKIM lives on a selector name that cannot be discovered, only guessed.
+          # These cover Resend (the choir's sender), Google, Microsoft and the
+          # common defaults.
+          for label in _dmarc _domainkey _acme-challenge \
+                       resend._domainkey send._domainkey default._domainkey \
+                       google._domainkey k1._domainkey k2._domainkey k3._domainkey \
+                       s1._domainkey s2._domainkey selector1._domainkey \
+                       selector2._domainkey mail._domainkey dkim._domainkey \
+                       zoho._domainkey fm1._domainkey fm2._domainkey fm3._domainkey; do
+            for t in TXT CNAME; do show "$t" "${label}.${DOMAIN}"; done
+          done
+
+          echo "=============== SUBDOMAIN MAIL ==============="
+          # Resend verifies a sending subdomain with its own MX and SPF.
+          for label in send mail email; do
+            for t in MX TXT; do show "$t" "${label}.${DOMAIN}"; done
+          done
+
+          echo "Done. Anything on a name not listed above will NOT appear here —"
+          echo "the registrar's own record list remains the authority."
