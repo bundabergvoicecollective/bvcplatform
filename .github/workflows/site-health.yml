@@ -1,0 +1,78 @@
+# Daily check that the public website and the members site are still answering.
+#
+# Exists because of a specific, named risk. Once DNS moves to Cloudflare, the
+# apex A record holds a literal address for GoDaddy's Website Builder, and
+# GoDaddy support confirmed on 7 Oct 2026: "they are still platform endpoints, so
+# GoDaddy can change them later. If that happens, you'd need to update them at
+# the external DNS provider."
+#
+# Nothing would announce that. The website would simply stop loading, and with a
+# choir site nobody checks hourly it could sit broken for weeks. This turns it
+# into a failed workflow run, which GitHub emails about.
+#
+# It only makes GET requests to public pages. Nothing here changes anything.
+name: Site health
+
+on:
+  schedule:
+    # 06:13 AEST, daily. Minute 13 rather than 0 to avoid the top-of-hour crush.
+    - cron: "13 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check the sites are up
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dig
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+
+      - name: Check the public website
+        env:
+          # The address GoDaddy support named for Websites + Marketing under
+          # external DNS. If the site is down, compare this against what the
+          # apex actually resolves to below — a mismatch is the likely cause,
+          # and the fix is to update the A record at the DNS provider.
+          EXPECTED_APEX: 13.248.243.5
+        run: |
+          set -u
+          DOMAIN=bundabergvoicecollective.com.au
+
+          echo "Apex resolves to : $(dig +short A "$DOMAIN" | tr '\n' ' ')"
+          echo "GoDaddy's address: $EXPECTED_APEX"
+          echo
+
+          failed=0
+          for url in "https://$DOMAIN" "https://www.$DOMAIN"; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -L "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "ok    $url  ($code)"
+            else
+              echo "FAIL  $url  ($code)"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" = "1" ]; then
+            echo
+            echo "::error::The public website is not answering. If the apex above no longer" \
+                 "matches GoDaddy's address, they have moved their Website Builder endpoint" \
+                 "and the A record needs updating at the DNS provider — see docs/dns-before-move.md."
+            exit 1
+          fi
+
+      # Reported, not enforced. The members site moves from the run.app host to
+      # the subdomain when APP_URL changes, so a hard check here would fail for
+      # whichever one is not in use yet.
+      - name: Report on the members site
+        if: always()
+        run: |
+          set -u
+          for url in https://members.bundabergvoicecollective.com.au \
+                     https://bvc-production-aoxblokwyq-ts.a.run.app; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 60 -L "$url" || echo 000)
+            echo "$url  ->  $code"
+          done
+          echo
+          echo "A cold start can take several seconds on the run.app host (min-instances=0)."
