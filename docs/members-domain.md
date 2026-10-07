@@ -1,93 +1,110 @@
-# Putting the members site on `bundabergvoicecollective.com`
+# Putting the members site on `members.bundabergvoicecollective.com.au`
 
-## The rule that governs all of this
+## What this touches, and why that needs care
 
-**Only the `.com` is touched. The `.com.au` is never touched.**
+`bundabergvoicecollective.com` is parked and not ours — GoDaddy serves a lander
+on it with a "Get This Domain" button. So the members site goes on a subdomain of
+`bundabergvoicecollective.com.au`, the domain we do own.
 
-`bundabergvoicecollective.com.au` is the GoDaddy website, and its DNS zone also
-carries the MX records the choir's email depends on and the TXT record verifying
-the Resend sending domain. Nothing in this document changes anything in that
-zone. If a step ever seems to ask you to, stop.
+That domain's DNS zone carries three things that matter, none of which are the
+members site:
 
-## Why this is safe
+1. **the website** — `@` and `www` point at GoDaddy Website Builder
+   (`76.223.105.230`, `13.248.243.5`)
+2. **the choir's email** — the `MX` records
+3. **the Resend sending domain** — the `TXT` records (SPF and DKIM) that verify
+   `bundabergvoicecollective.com.au`. Lose these and the members site stops
+   sending password set-up and reset emails, which is the thing that just started
+   working.
 
-The two domains point at different services:
+Cloudflare needs the whole zone, so all three come along for the ride. They do
+not have to be *changed* — only carried across intact. The procedure below is
+built around proving that before anything switches.
 
-| Domain | Resolves to | What it is |
-| --- | --- | --- |
-| `bundabergvoicecollective.com.au`, `www` | `76.223.105.230`, `13.248.243.5` | GoDaddy Website Builder — the live site |
-| `bundabergvoicecollective.com`, `www` | `3.33.130.190`, `15.197.148.33` | GoDaddy domain forwarding |
+**Only one record is added: `members`. Nothing else in the zone is edited.**
 
-So the `.com` is a second domain that currently just forwards to the website. Its
-root is free, which is why the members site goes there rather than under a path.
+## Why Cloudflare at all
 
-**Confirm two things before starting.** Open `bundabergvoicecollective.com` — it
-should bounce you to the `.com.au` site, which is what "forwarding" looks like.
-Then, in GoDaddy's DNS for the `.com`, check whether it carries any `MX` records.
-It almost certainly does not, since the email is on the `.com.au` — but if it
-does, write them down so you can confirm Cloudflare imported them.
-
-## Why Cloudflare
+A subdomain cannot simply point at Cloud Run. Cloud Run routes by the `run.app`
+hostname in the `Host` header, so a plain CNAME arrives as
+`Host: members.bundabergvoicecollective.com.au`, matches no service, and 404s.
+Something has to rewrite that header.
 
 | Option | Why not |
 | --- | --- |
 | Cloud Run domain mapping | Not offered in `australia-southeast1`. |
-| GoDaddy domain forwarding | Forwards to the site root and **drops the path and query string**, so a password reset link would arrive with its token stripped. |
+| GoDaddy domain forwarding | Bounces to the site root and **drops the path and query string**, so a reset link arrives with its token stripped. |
 | Firebase Hosting | Its Cloud Run rewrite needs the paid Blaze plan. |
 | GCP load balancer | A forwarding rule is a standing monthly charge. |
 
-Cloudflare's free plan does it for nothing.
+Cloudflare's free plan rewrites the header for nothing.
 
-## Step 1 — move the `.com` zone to Cloudflare
+## The safety property that makes this manageable
+
+**You build the whole zone in Cloudflare and verify it before changing a single
+nameserver.** Until you flip the nameservers at GoDaddy, Cloudflare's copy is
+inert — it serves nobody. Nothing you do in step 2 can break anything.
+
+So the risk is entirely "did every record come across", and that is checkable in
+advance.
+
+## Step 1 — capture what GoDaddy has now
+
+Before opening Cloudflare, go to GoDaddy → Domains → `bundabergvoicecollective.com.au`
+→ DNS, and **save the full record list**. Screenshot it, or use GoDaddy's export.
+
+Write down especially:
+
+- every `MX` record, with its **priority**
+- every `TXT` record — SPF (`v=spf1 …`), DKIM (often a long one on a name like
+  `resend._domainkey`), and any domain-verification strings for Google, Microsoft
+  or anyone else
+- `@` and `www`
+- anything else at all, however obscure
+
+This list is what you check Cloudflare against. Do not skip it — it is the whole
+safety net.
+
+## Step 2 — build the zone in Cloudflare (nothing goes live yet)
 
 1. Sign up at dash.cloudflare.com (free plan).
-2. **Add a site** → `bundabergvoicecollective.com` → Free.
-3. Review the records Cloudflare found. For a forwarding-only domain there may be
-   very little. Add by hand anything you noted above that is missing.
-4. Cloudflare gives you two nameservers. In GoDaddy, change the nameservers **on
-   the `.com` only** — Domain Settings → Nameservers → Change → I'll use my own.
+2. **Add a site** → `bundabergvoicecollective.com.au` → Free.
+3. Cloudflare scans and imports what it can find. **Now compare its list against
+   your step 1 capture, record by record.** Its scan is good but not guaranteed
+   complete — DKIM records in particular are sometimes missed.
+4. Add anything missing by hand. Match the values byte for byte, and the MX
+   priorities exactly.
+5. Set `@` and `www` to **DNS only** (grey cloud). That keeps the website's
+   traffic going exactly where it goes today rather than routing it through
+   Cloudflare on day one. Leave every `MX` and `TXT` alone — mail records are
+   never proxied.
+6. **Do not change the nameservers yet.**
 
-**GoDaddy's forwarding stops working the moment the nameservers move.** That is
-intended: Cloudflare replaces it, and the root is about to serve the members site
-instead. Do not be alarmed when `bundabergvoicecollective.com` briefly does
-nothing while this propagates — usually minutes.
+## Step 3 — add the `members` record
 
-## Step 2 — point the root at Cloud Run
-
-Cloud Run routes requests by the `run.app` hostname in the `Host` header. A plain
-CNAME is not enough on its own: the request would arrive with
-`Host: bundabergvoicecollective.com`, match no service, and 404. Something has to
-rewrite that header.
-
-1. **DNS → Add record**, twice:
-
-   | Type | Name | Target | Proxy |
-   | --- | --- | --- | --- |
-   | CNAME | `@` | `bvc-production-aoxblokwyq-ts.a.run.app` | **Proxied** |
-   | CNAME | `www` | `bundabergvoicecollective.com` | **Proxied** |
-
-   A CNAME at the apex is normally illegal; Cloudflare flattens it, which is one
-   of the reasons this works at all. Both must be proxied (orange cloud) — that
-   is what puts Cloudflare in the path so the rule below can apply.
-
+1. **DNS → Add record**
+   - Type `CNAME`, Name `members`,
+     Target `bvc-production-aoxblokwyq-ts.a.run.app`
+   - Proxy status **Proxied** (orange cloud). This one must be proxied — that is
+     what puts Cloudflare in the request path so the rule below can apply.
 2. **Rules → Origin Rules → Create rule**
-   - When incoming requests match: Hostname **is in**
-     `bundabergvoicecollective.com`, `www.bundabergvoicecollective.com`
+   - When incoming requests match: Hostname equals
+     `members.bundabergvoicecollective.com.au`
    - Then: **Host Header** → Rewrite to `bvc-production-aoxblokwyq-ts.a.run.app`
    - Deploy.
 
-Check Origin Rules is on your plan — Cloudflare moves features between plans, so
-trust the dashboard over this document. If Host Header Override is not offered,
-use the Worker below instead; it does the same job.
+Check Origin Rules is available on your plan — Cloudflare moves features between
+plans, so trust the dashboard over this document. If Host Header Override is not
+offered, use the Worker below; it does the same job.
 
 ### Fallback: a Worker
 
-Keep the same proxied records, then **Workers & Pages → Create Worker**, paste
-this, deploy, and add routes for `bundabergvoicecollective.com/*` and
-`www.bundabergvoicecollective.com/*`.
+Keep the same proxied `members` record, then **Workers & Pages → Create Worker**,
+paste this, deploy, and add a route for
+`members.bundabergvoicecollective.com.au/*`.
 
 ```js
-// Proxies bundabergvoicecollective.com to the Cloud Run service.
+// Proxies members.bundabergvoicecollective.com.au to the Cloud Run service.
 //
 // Changing the URL's hostname is what rewrites the Host header — Cloud Run
 // routes by it, which is why a bare CNAME 404s. Do not try to set the Host
@@ -110,7 +127,7 @@ export default {
     });
 
     // An absolute Location pointing at run.app would move the browser off the
-    // real domain, and with it the session cookie. Point it back.
+    // subdomain, and with it the session cookie. Point it back.
     const location = response.headers.get("location");
     if (location && location.includes(ORIGIN)) {
       const fixed = new Headers(response.headers);
@@ -124,40 +141,54 @@ export default {
 ```
 
 `Set-Cookie` passes through untouched. The app sets `__session` with no `Domain`
-attribute, so the browser scopes it to whichever host it asked — which is what we
-want.
+attribute, so the browser scopes it to the subdomain, which is what we want.
 
-## Step 3 — send `www` to the bare domain
+## Step 4 — flip the nameservers
 
-**Rules → Redirect Rules → Create rule**
+Only once step 2's comparison is clean. Cloudflare gives you two nameservers;
+put them into GoDaddy under **Domain Settings → Nameservers → Change → I'll use
+my own**.
 
-- When: Hostname equals `www.bundabergvoicecollective.com`
-- Then: Dynamic redirect, 301, to
-  `concat("https://bundabergvoicecollective.com", http.request.uri.path)`
+Propagation is usually minutes. The website and email should be unaffected
+throughout, because the records are identical — that is what step 1 and 2 were
+for.
 
-One canonical host keeps the session cookie in one place. Without this, signing
-in on `www` and then visiting the bare domain looks like being signed out.
+**Within the first few minutes, check in this order:**
 
-## Do **not** add a `/members` redirect
+- [ ] `bundabergvoicecollective.com.au` still loads
+- [ ] `www.bundabergvoicecollective.com.au` still loads
+- [ ] **send an email to the choir's address from an outside account — it still
+      arrives**
+- [ ] **send one from the choir's address — it still goes out**
 
-It is tempting to make `bundabergvoicecollective.com/members` redirect to the
-root. Do not: **`/members` is already a page in the app** — the admin member list
-(`client/App.tsx`). A redirect rule there would break it for admins.
+If mail breaks, the MX records did not come across. Fix them in Cloudflare's DNS;
+you do not need to move the nameservers back, and the fix takes effect in
+minutes.
 
-Nothing is lost. Anyone who types `/members` lands in the app anyway, and is
-asked to sign in like anywhere else.
+## Step 5 — prove the members site sends email, before anyone relies on it
 
-## Step 4 — move `APP_URL`
+The Resend verification lives in this zone, so re-check it after the move:
+
+- [ ] Resend dashboard → Domains → `bundabergvoicecollective.com.au` still shows
+      **Verified**
+- [ ] signed in as admin, `/api/admin/email-check` reports `ok: true`
+- [ ] `/api/admin/email-check?send=1` arrives in your inbox
+
+Do this before step 6, and certainly before inviting the choir. Password set-up
+links are how all 76 members get in; that path has only just started working and
+is the one thing here that must not regress.
+
+## Step 6 — move `APP_URL`
 
 `APP_URL` is the origin for every emailed link: password set-up, reset and
-invites. Once the domain answers it has to change, or members will keep being
-sent to the `run.app` host.
+invites. Once the subdomain answers it has to change, or members keep being sent
+to the `run.app` host.
 
 Add a GitHub **Actions secret** — the Secrets tab, not Variables, see CLAUDE.md —
 named `APP_URL`:
 
 ```
-https://bundabergvoicecollective.com
+https://members.bundabergvoicecollective.com.au
 ```
 
 `.github/workflows/deploy.yml` already reads `secrets.APP_URL` and falls back to
@@ -165,29 +196,24 @@ the `run.app` host, so adding the secret and re-running the deploy is the whole
 change. Confirm it took in the deploy log's `Runtime vars set:` line.
 
 **Everyone gets signed out once.** The session cookie is scoped to the host that
-set it, so a cookie issued by the `run.app` origin is not sent to the new domain.
-Expect to sign in again. This is the reason to finish the domain before inviting
-the choir rather than after.
+set it, so a cookie issued by the `run.app` origin is not sent to the subdomain.
+This is the reason to finish the domain before inviting the choir rather than
+after.
 
-## Step 5 — verify
+## Step 7 — verify the members site
 
-In order, on `https://bundabergvoicecollective.com`:
+On `https://members.bundabergvoicecollective.com.au`:
 
 - [ ] the sign-in page loads, styled, with no console 404s — proves `/assets/*`
-      is being proxied, not just the HTML
+      is proxied, not just the HTML
 - [ ] signing in works, and a refresh keeps you signed in — proves the cookie is
       set and returned
 - [ ] the admin dashboard shows real numbers — proves `/api/trpc` reaches the
       server through the proxy
 - [ ] a gallery photo upload succeeds — proves multipart POSTs survive
-- [ ] `www.bundabergvoicecollective.com` redirects to the bare domain
-- [ ] a reset email's link points at the new domain and opens the reset page
-- [ ] **the `.com.au` site still loads, and email still sends and receives**
+- [ ] a reset email's link points at the subdomain and opens the reset page
 
-That last one should be nothing to do with any of this — the `.com.au` zone was
-never touched — but check it anyway, first thing the next morning too.
-
-## Step 6 — redirect the old Manus site
+## Step 8 — redirect the old Manus site
 
 The old address is `https://bundavoice-k8a8akbx.manus.space/`, and the hostname
 decides what is possible: `manus.space` is Manus's domain, not ours. We cannot
@@ -207,8 +233,7 @@ Two limits:
   iOS may open the redirect in Safari rather than in that window. It still works;
   they just want to re-add the new site to get the tidy version back.
 
-Do this **after** step 5 passes, so members are not sent to a URL that is still
-being set up.
+Do this after step 7 passes, so members are not sent to a URL still being set up.
 
 ## Upload sizes — checked, not a problem
 
@@ -222,3 +247,13 @@ Cloudflare's free plan caps a request body at 100 MB, worth knowing because
 
 If a future change ever posts a whole recording in one request, this cap becomes
 real.
+
+## If you would rather not move the zone at all
+
+Nothing here is forced. Staying on the `run.app` URL costs nothing and risks
+nothing; it is only ugly. The migration is not blocked by it — members can be
+onboarded today on the `run.app` address.
+
+The cost of deferring is that members bookmark one URL now and have to move to
+another later, and the Manus redirect would need redoing. That is an
+inconvenience, not a problem.
