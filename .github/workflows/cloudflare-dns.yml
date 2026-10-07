@@ -1,0 +1,53 @@
+# Build the Cloudflare DNS records for bundabergvoicecollective.com.au.
+#
+# The sessions working on this repo run in a cloud container with no browser and
+# a network policy that denies dash.cloudflare.com, so these records cannot be
+# created from there. A GitHub runner has open internet, so they can be created
+# here instead — which takes the 216-character DKIM string out of human hands,
+# where one mistyped character would silently stop the members site sending
+# password set-up emails.
+#
+# Defaults to reporting. Set apply to true to write.
+#
+# Needs a CLOUDFLARE_API_TOKEN secret with Zone:Read and DNS:Edit on this zone
+# and nothing else. The zone itself must already exist in Cloudflare — adding a
+# domain needs a person.
+name: Cloudflare DNS
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Write the records (unticked = report only)
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  dns:
+    name: Build DNS records
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Report the changes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec tsx scripts/cloudflareDns.ts
+
+      - name: Apply them
+        if: inputs.apply
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec tsx scripts/cloudflareDns.ts --apply
