@@ -45,8 +45,7 @@ p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDVe3mZDGihcCQGM2VhgptoGEboffap5/t2/S0/Di
 
 | Type | Name | Value | Proxy | Why |
 | --- | --- | --- | --- | --- |
-| A | `@` | `76.223.105.230` | **DNS only** | the website |
-| A | `@` | `13.248.243.5` | **DNS only** | the website, second address |
+| A | `@` | `13.248.243.5` | **DNS only** | the website — the address GoDaddy support named |
 | CNAME | `www` | `bundabergvoicecollective.com.au` | **DNS only** | the website |
 | CNAME | `send` | `send.forge.rmta.net` | **DNS only** | Resend — outbound email |
 | CNAME | `rsend` | `rsend-apne1.forge.rmta.net` | **DNS only** | Resend — outbound email |
@@ -61,24 +60,33 @@ would point the zone back at the registrar.
 **Only `members` is proxied.** Everything else stays grey so the website and
 Resend behave exactly as they do today, with Cloudflare out of the path.
 
-## The one unresolved risk
+## The apex address, and the risk GoDaddy confirmed
 
 The apex `A` record is not an address in GoDaddy's interface — it reads
-"WebsiteBuilder Site", a managed pointer GoDaddy resolves on your behalf. The two
-addresses above are what it resolved to on 7 Oct 2026.
+"WebsiteBuilder Site", a managed pointer they resolve on your behalf. Asked what
+it should become under external DNS, GoDaddy support answered on 7 Oct 2026:
 
-Cloudflare cannot hold a pointer like that. It needs literal addresses. So moving
-the nameservers means **hardcoding addresses GoDaddy controls and may rotate
-without notice** — and if they do, the public website goes down with nothing to
-warn you.
+> * A record for @ → 13.248.243.5
+> * CNAME for www → bundabergvoicecollective.com.au
+>
+> Those are the right targets for your current GoDaddy Websites + Marketing
+> setup. They're generally meant to be stable, but they are still platform
+> endpoints, so GoDaddy can change them later. If that happens, you'd need to
+> update them at the external DNS provider.
 
-Worth asking GoDaddy support before flipping: *"I am moving DNS to an external
-provider. What records should point my Website Builder site, and are those
-addresses stable?"* They have a documented path for external DNS. Better to have
-their answer than an address read out of a lookup.
+**Use only `13.248.243.5`.** A lookup on the same day also returned
+`76.223.105.230`, but support named one address, and two `A` records round-robin:
+if the unnamed one is ever retired, half of all visitors would hit a dead address
+while the site looked fine from your desk.
+
+The caveat in their last sentence is the lasting cost of this move, and it does
+not go away. Nothing would announce such a change — the website would simply stop
+loading. `.github/workflows/site-health.yml` checks the site every morning for
+exactly this reason and fails the run if it is down, so GitHub emails about it
+rather than a choir member noticing weeks later.
 
 Re-run the snapshot workflow (Actions → **DNS snapshot**) just before the switch
-to confirm the addresses have not already moved.
+to confirm the address has not already moved.
 
 ## After the move, confirm
 
