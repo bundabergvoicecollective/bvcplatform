@@ -115,8 +115,24 @@ type CfRecord = {
 };
 
 async function cf<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = process.env.CLOUDFLARE_API_TOKEN;
-  if (!token) throw new Error("CLOUDFLARE_API_TOKEN is not set.");
+  // All whitespace is stripped, not just trimmed. A token copied out of a
+  // narrow dashboard pane can arrive wrapped across lines, and an interior
+  // newline makes a header value invalid — `Headers.append: "..." is an
+  // invalid header value`, which reads as a bad token rather than as a bad
+  // paste. A trailing newline is harmless by contrast: that one gets
+  // normalised away, so trimming alone would not have fixed this.
+  //
+  // Safe to strip, because a Cloudflare API token is 40 characters of
+  // [A-Za-z0-9_-] and never contains whitespace. Removing it reconstructs the
+  // intended value rather than inventing one.
+  const raw = process.env.CLOUDFLARE_API_TOKEN ?? "";
+  const token = raw.replace(/\s+/g, "");
+  if (!token) throw new Error("CLOUDFLARE_API_TOKEN is not set (or is only whitespace).");
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error(
+      `CLOUDFLARE_API_TOKEN contains characters a Cloudflare token never has. It is ${token.length} characters once whitespace is removed; a token is 40. Re-copy it and re-add the secret.`,
+    );
+  }
 
   const res = await fetch(`${API}${path}`, {
     ...init,
