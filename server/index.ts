@@ -1,4 +1,7 @@
 import "dotenv/config";
+// Must stay above every import that reaches `db.ts`: it exits with the full
+// list of missing configuration before that module throws on the first one.
+import "./startupCheck";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -71,9 +74,34 @@ async function ensureDatabase() {
     await conn.execute("CREATE DATABASE IF NOT EXISTS `bvc`");
     await conn.end();
     console.log("[DB Init] Database `bvc` is ready");
+    return;
   } catch (err) {
-    // Non-fatal: if the DB already exists the app will work fine
-    console.warn("[DB Init] Could not auto-create database (may already exist):", (err as Error).message);
+    // Two unrelated failures used to share one "may already exist" line: being
+    // refused permission to create databases, which is harmless once `bvc`
+    // exists, and not reaching the server at all, which means every request is
+    // about to fail. Ask the app's own connection which of the two this is.
+    const reason = (err as Error).message;
+    if (await databaseReachable()) {
+      console.log(`[DB Init] Could not create database \`bvc\` (${reason}), but it is reachable — carrying on`);
+    } else {
+      // Deliberately not fatal: a blip while connecting during a cold start
+      // should not turn into a crash loop. Loud, because until it clears every
+      // request fails and the server still answers on its port.
+      console.error(`[DB Init] DATABASE IS UNREACHABLE (${reason}) — the server will start but every request will fail`);
+    }
+  }
+}
+
+/** Whether the configured DATABASE_URL answers a trivial query. */
+async function databaseReachable(): Promise<boolean> {
+  try {
+    const { createConnection } = await import("mysql2/promise");
+    const conn = await createConnection(process.env.DATABASE_URL!);
+    await conn.execute("SELECT 1");
+    await conn.end();
+    return true;
+  } catch {
+    return false;
   }
 }
 
