@@ -18,6 +18,7 @@ on:
         options:
           - emails
           - members
+          - recency
           - schema
 
 env:
@@ -72,6 +73,10 @@ jobs:
       - name: Check member readiness
         if: inputs.audit == 'members'
         run: pnpm exec tsx scripts/memberReadiness.ts
+
+      - name: Check how current the data is
+        if: inputs.audit == 'recency'
+        run: pnpm exec tsx scripts/dataRecency.ts
 
       # Report only — no --apply, so this never changes the schema. The deploy
       # workflow is what applies it.
