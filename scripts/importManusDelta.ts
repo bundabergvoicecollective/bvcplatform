@@ -25,6 +25,7 @@
  *   DATABASE_URL=... tsx scripts/importManusDelta.ts --file=manus-delta.json
  *   ... --apply       write the changes, in one transaction
  *   ... --actor=<email>   admin recorded as createdBy/assignedBy (default: lowest-id admin)
+ *   ... --show-emails     print member addresses in full; local runs only, never CI
  */
 import mysql from "mysql2/promise";
 import { readFileSync } from "node:fs";
@@ -35,10 +36,19 @@ const arg = (flag: string) =>
 const APPLY = process.argv.includes("--apply");
 const FILE = arg("file");
 const ACTOR_EMAIL = (arg("actor") ?? "").toLowerCase().trim();
+const SHOW_EMAILS = process.argv.includes("--show-emails");
 
 /** MySQL timestamp columns want 'YYYY-MM-DD HH:MM:SS' in UTC, not an ISO string. */
 const toSql = (iso: string) => new Date(iso).toISOString().slice(0, 19).replace("T", " ");
 const key = (email: string | null | undefined) => (email ?? "").toLowerCase().trim();
+
+/**
+ * This repository is public, and so are its Actions logs. Member addresses are
+ * masked unless --show-emails is passed, which is for a local run only. The
+ * other scripts here keep to counts and dates for the same reason.
+ */
+const shown = (email: string) =>
+  SHOW_EMAILS ? email : email.replace(/^(.{2})[^@]*(@.*)$/, "$1\u2026$2");
 
 type Delta = {
   source: string;
@@ -213,7 +223,7 @@ async function main() {
   }
   if (missing.size) {
     console.log(`\n${missing.size} member(s) in the export with no account here:`);
-    for (const m of missing) console.log(`  ${m}  — invite through the app; their rows above were skipped`);
+    for (const m of missing) console.log(`  ${shown(m)}  — invite through the app; their rows above were skipped`);
   }
   if (skipped.length) console.log(`\n${skipped.length} already present, left alone.`);
 
