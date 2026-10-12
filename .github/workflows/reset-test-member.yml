@@ -1,0 +1,90 @@
+# Put one member's account back to its pre-migration state, for testing.
+#
+# Once someone has set a password, the set-up email becomes a reset email and
+# the first-time journey can no longer be walked through. This clears the
+# password on a single named account so that journey can be tested for real
+# before 76 invitations go out.
+#
+# Nothing here is one-way: the account gets back in through the normal set-up
+# email. It refuses to touch an admin account, and refuses to act on an address
+# matching no row or more than one.
+#
+# Defaults to reporting. Both the address and the apply tick are required at
+# dispatch, so this cannot run by accident.
+name: Reset a test member
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: The member's email address (must be a non-admin account)
+        type: string
+        required: true
+      apply:
+        description: Actually clear it (unticked = report only)
+        type: boolean
+        required: true
+        default: false
+      clear_names:
+        description: Also clear the first/last name, to see the profile form new members meet
+        type: boolean
+        required: false
+        default: false
+
+env:
+  # TiDB connection details (not secret; the password is the DB_PASSWORD secret)
+  DB_HOST: gateway01.ap-southeast-1.prod.aws.tidbcloud.com
+  DB_PORT: "4000"
+  DB_USER: 3JSdBrsm7qtoEPs.root
+  DB_NAME: bvc
+
+jobs:
+  reset:
+    name: Reset the account
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve database URL
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import os, urllib.parse
+          url = os.environ.get("DATABASE_URL_SECRET", "").strip()
+          if not url:
+              pw = urllib.parse.quote(os.environ["DB_PASSWORD"].strip(), safe="")
+              url = (f"mysql://{os.environ['DB_USER']}:{pw}@{os.environ['DB_HOST']}:"
+                     f"{os.environ['DB_PORT']}/{os.environ['DB_NAME']}"
+                     '?ssl={"rejectUnauthorized":true}')
+          print(f"::add-mask::{url}")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"DATABASE_URL={url}\n")
+          EOF
+
+      # The address goes through the environment, never interpolated into the
+      # command: `${{ inputs.email }}` inside a run block is shell injection
+      # waiting for an apostrophe, and an email address may legitimately
+      # contain one.
+      - name: Reset
+        env:
+          TARGET_EMAIL: ${{ inputs.email }}
+          DO_APPLY: ${{ inputs.apply }}
+          DO_NAMES: ${{ inputs.clear_names }}
+        run: |
+          args=( "--email=$TARGET_EMAIL" )
+          if [ "$DO_APPLY" = "true" ]; then args+=( --apply ); fi
+          if [ "$DO_NAMES" = "true" ]; then args+=( --names ); fi
+          pnpm exec tsx scripts/resetMemberForTesting.ts "${args[@]}"
