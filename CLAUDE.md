@@ -57,7 +57,7 @@ The prompt was not even asking about a real difference. The first run of the rec
 
 **`tsconfig.json`'s `include` covers `client`, `server`, `shared`, `drizzle` and `scripts` only.** Root modules are typechecked only because included files import them. A new root file nothing imports is invisible to `tsc`.
 
-**Deployment is Cloud Run in `australia-southeast1`, via `.github/workflows/deploy.yml` on push to `main`.** The site is served from its `run.app` URL. Firebase Hosting was tried and removed: its Cloud Run rewrite needs a paid plan, and `australia-southeast1` offers no Cloud Run domain mapping. A GoDaddy redirect provides a friendly link, which is why `APP_URL` and any webhook URL must stay the `run.app` host — a redirect drops the path and query string.
+**Deployment is Cloud Run in `australia-southeast1`, via `.github/workflows/deploy.yml` on push to `main`.** Members reach it at `members.bundabergvoicecollective.com.au`; the `run.app` URL still serves the same app. The subdomain is a proxied CNAME in Cloudflare plus a Worker that rewrites the `Host` header, because Cloud Run routes by its own hostname and `australia-southeast1` offers no domain mapping. Cloudflare's Origin Rules would do this without code, but Host Header rewriting is Enterprise-only. Firebase Hosting was tried and removed: its Cloud Run rewrite needs a paid plan. A GoDaddy domain forward is not an option either — it drops the path and query string, so a reset link would arrive with its token stripped. See `docs/members-domain.md`.
 
 **GitHub's secrets page has a Secrets tab and a Variables tab.** The workflow reads `secrets.*`. Values added under Variables are invisible to it and look identical once saved. This has already silently cost a round of debugging.
 
