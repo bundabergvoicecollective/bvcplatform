@@ -90,10 +90,14 @@ jobs:
       # rehearsals, their attendance, the pass orders and the balances.
       #
       # The export is real member data and this repository is public, so it
-      # arrives as the MANUS_DELTA_B64 secret (gzip then base64 of the JSON)
-      # rather than a committed file or a dispatch input, both of which would
-      # be world-readable. The importer masks addresses in its output for the
-      # same reason.
+      # arrives as the MANUS_DELTA_B64 secret rather than a committed file or a
+      # dispatch input, both of which would be world-readable. The importer
+      # masks addresses in its output for the same reason.
+      #
+      # The secret may hold the export either as JSON or gzipped and base64'd —
+      # the name predates the first form. Both are accepted, because pasting
+      # 3.8 KB of base64 correctly is a worse thing to ask of someone than
+      # pasting the file they already have.
       - name: Catch up from Manus
         if: inputs.audit == 'manus'
         env:
@@ -107,17 +111,22 @@ jobs:
             echo "::error::MANUS_DELTA_B64 is not set. Add the export as a repository secret first."
             exit 1
           fi
-          # Enough about the secret to tell a truncated paste from a mangled
-          # one, without putting any of its content in a public log. 3808 is
-          # what the export compresses to.
-          printf '%s' "$MANUS_DELTA_B64" | tr -d '[:space:]' > /tmp/delta.b64
-          LEN=$(wc -c < /tmp/delta.b64)
-          BAD=$(tr -d 'A-Za-z0-9+/=' < /tmp/delta.b64 | wc -c)
-          echo "secret: $LEN characters (expected 3808), $BAD outside the base64 alphabet, length mod 4 = $((LEN % 4))"
-          # -i discards anything stray rather than failing on it.
-          base64 -di < /tmp/delta.b64 | gunzip > /tmp/manus-delta.json
-          node -e 'JSON.parse(require("fs").readFileSync("/tmp/manus-delta.json","utf8"))' \
-            || { echo "::error::The decoded secret is not valid JSON."; exit 1; }
+          printf '%s' "$MANUS_DELTA_B64" > /tmp/delta.in
+          valid() { node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$1" 2>/dev/null; }
+
+          if valid /tmp/delta.in; then
+            echo "The secret holds the export as JSON."
+            cp /tmp/delta.in /tmp/manus-delta.json
+          elif tr -d '[:space:]' < /tmp/delta.in | base64 -di 2>/dev/null | gunzip > /tmp/manus-delta.json 2>/dev/null \
+               && valid /tmp/manus-delta.json; then
+            echo "The secret holds the export gzipped and base64 encoded."
+          else
+            # Enough to tell a truncated paste from a mangled one, with none of
+            # the content, which matters in a public log.
+            LEN=$(wc -c < /tmp/delta.in)
+            echo "::error::The secret is neither JSON nor gzipped base64. It holds $LEN characters; the export is 24453 as JSON or 3808 encoded. A truncated paste is the usual cause."
+            exit 1
+          fi
           if [ "$APPLY" = "true" ]; then
             pnpm exec tsx scripts/importManusDelta.ts --file=/tmp/manus-delta.json --apply
           else
