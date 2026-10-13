@@ -127,10 +127,23 @@ async function startServer() {
       console.log(`[Square Webhook] Received event: ${eventType}`);
 
       // Handle payment completion
-      if (eventType === "payment.completed" || eventType === "order.fulfillment.updated") {
+      // Square has no `payment.completed` event. It sends `payment.created`
+      // when a payment starts and `payment.updated` as it changes state, and a
+      // finished payment arrives as `payment.updated` with status COMPLETED —
+      // so the old condition matched nothing a payment link ever produces.
+      // Every purchase would have been received, logged and ignored: the
+      // member pays, no pass arrives, and the order sits pending.
+      if (eventType === "payment.created" || eventType === "payment.updated") {
         try {
           const data = (event.data as Record<string, unknown>)?.object as Record<string, unknown> ?? {};
           const payment = (data.payment ?? data) as Record<string, unknown>;
+          // Both events also fire for APPROVED, PENDING, CANCELED and FAILED.
+          // Only money actually taken may grant anything.
+          const paymentStatus = (payment.status ?? "") as string;
+          if (paymentStatus !== "COMPLETED") {
+            console.log(`[Square Webhook] ${eventType} with status ${paymentStatus || "(none)"} — nothing to do`);
+            return res.json({ received: true });
+          }
           const orderId = (payment.order_id ?? payment.orderId) as string | undefined;
           const note = (payment.note ?? "") as string;
 
