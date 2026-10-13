@@ -148,11 +148,10 @@ in full. `docs/members-domain.md` is the full procedure.
    attendance marking
 3. Void the 5 duplicate pending orders, and settle the member whose pass and
    pending order both need a decision (both named under "The data gap" above)
-4. Check whether Carolyn Rose has an account here. Tarin Dobbie does, and
-   their balance synced; Carolyn appears only in the export's members list, so
-   the `manus` audit now reports her either way. If she is missing, add her
-   through the app, so she gets a set-up email rather than a row nobody can
-   sign in to
+4. ~~Add the members who joined Manus after the snapshot.~~ Both Carolyn Rose
+   and Tarin Dobbie already have accounts here, confirmed 13 Oct once the
+   `manus` audit started resolving the export's members list rather than only
+   the addresses attached to a pass, order or attendance mark
 5. Walk the set-up journey on a phone (the test account is password-less and
    ready — `mclucas.andy@gmail.com`)
 6. Invite 2–3 members, then the rest
