@@ -96,6 +96,12 @@ async function main() {
     return id;
   };
 
+  // The members list is reported, never written, for the reason in the header.
+  // It is still resolved, so that someone present in Manus and absent here is
+  // named rather than slipping past because they happen to have no pass,
+  // attendance or order yet — which is exactly the case a new member is.
+  for (const m of delta.members) resolve(m.email);
+
   const plan: { table: string; sql: string; params: unknown[]; describe: string }[] = [];
   const skipped: string[] = [];
 
