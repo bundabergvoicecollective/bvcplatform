@@ -278,7 +278,14 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
           </Link>
         </header>
 
-        <main className={noPadding ? "flex-1 flex flex-col overflow-hidden" : "flex-1 p-6"}>
+        {/* min-w-0 because a flex item defaults to min-width:auto, so one wide
+            child — a long address that cannot wrap, a table, a chart that
+            mismeasured — stretches the whole page and shifts every heading off
+            the left of the screen. overflow-x-clip rather than hidden: clip
+            does not make this a scroll container, so overflow-y stays visible
+            and the page keeps scrolling normally. Measured at 390px: a page
+            that was 525px wide becomes 390px. */}
+        <main className={noPadding ? "flex-1 flex flex-col overflow-hidden" : "flex-1 p-6 min-w-0 overflow-x-clip"}>
           {children}
         </main>
       </div>
