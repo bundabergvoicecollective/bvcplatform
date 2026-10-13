@@ -23,8 +23,9 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
+import { updateAppBadge } from "@/lib/appBadge";
 import { getLoginUrl } from "@/const";
 import PendingApproval from "@/pages/PendingApproval";
 
@@ -74,6 +75,15 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
   const unreadCount = unread?.length ?? 0;
   const unreadMsgCount = unreadSummary?.unreadMessages ?? 0;
   const unreadAnnouncementCount = unreadSummary?.unreadAnnouncements ?? 0;
+
+  // The home-screen icon carries the same number as the bell, so the icon and
+  // the app never disagree. The query above already refetches every 30s, so
+  // the badge follows it without a timer of its own, and clears itself the
+  // moment the count reaches zero — including on sign-out, where `enabled`
+  // goes false, `unread` empties and this runs with 0.
+  useEffect(() => {
+    updateAppBadge(user ? unreadCount : 0);
+  }, [user, unreadCount]);
 
   if (loading) {
     return (
