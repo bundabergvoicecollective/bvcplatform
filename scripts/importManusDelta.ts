@@ -207,6 +207,18 @@ async function main() {
     });
   }
 
+  // The other direction, which the verification at the end does not cover: a
+  // pass active here that the export does not list at all. Nothing in the
+  // export speaks to these, so they are left alone — but an active pass Manus
+  // has stopped treating as active is the shape a missed deduction takes, so
+  // it is named rather than silently passed over.
+  const exportedEmails = new Set(delta.activePasses.map((p) => key(p.userEmail)));
+  const emailById = new Map(users.filter((u) => u.email).map((u) => [u.id, key(u.email)]));
+  const unlisted = havePasses.filter((h) => {
+    const email = emailById.get(h.userId);
+    return !email || !exportedEmails.has(email);
+  });
+
   // ── report ──────────────────────────────────────────────────────────────
   const counts = plan.reduce<Record<string, number>>((acc, p) => ({ ...acc, [p.table]: (acc[p.table] ?? 0) + 1 }), {});
   counts.attendance = attendancePlan.length;
@@ -220,6 +232,20 @@ async function main() {
   if (balanceChanges.length) {
     console.log(`\n${balanceChanges.length} pass balances corrected:`);
     for (const c of balanceChanges) console.log(`  ${c}`);
+  }
+  if (unlisted.length) {
+    const outstanding = unlisted.reduce((n, h) => n + h.remainingSessions, 0);
+    console.log(
+      `\n${unlisted.length} pass(es) active here that the export does not list, ` +
+        `${outstanding} session(s) between them:`,
+    );
+    for (const h of unlisted) {
+      const email = emailById.get(h.userId);
+      console.log(
+        `  ${email ? shown(email) : `user #${h.userId}`}  ` +
+          `${h.remainingSessions}/${h.totalSessions} — left alone, nothing in the export covers it`,
+      );
+    }
   }
   if (missing.size) {
     console.log(`\n${missing.size} member(s) in the export with no account here:`);
