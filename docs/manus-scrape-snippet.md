@@ -1,99 +1,100 @@
-# Getting data out of Manus without screenshots
+# Getting the data out, without screenshots or paging
 
-Two routes. Try the first — if it works it gets everything in one go.
+The app's API is tRPC, and the procedure names are known from `routers.ts`. So
+rather than scraping rendered pages, ask the API for everything in one go. The
+request carries your existing session cookie, so being signed in is all the
+authentication needed.
 
-## Route 1: find the data behind the page (fastest)
+Confirmed on 13 Oct 2026: the Manus copy at `bundavoice-k8a8akbx.manus.space`
+runs this same codebase — its network traffic shows the same tRPC procedures
+(`auth.me`, `sessions.list`, `notifications.unread`) — so these calls apply to it
+unchanged.
 
-Most apps of this kind fetch their rows as JSON and render them. If Manus does,
-you can take the JSON directly instead of scraping tables.
+## Do this
 
-1. On the Manus attendance (or payments) page, press **F12** — or
-   **⌥⌘I** — to open DevTools
-2. Click the **Network** tab
-3. Tick **Fetch/XHR** to filter
-4. **Reload the page** (⌘R)
-5. Look down the list for a request whose name sounds like the data —
-   `attendance`, `sessions`, `members`, `orders`, `payments`, or something
-   under `/api/`
-6. Click it, then the **Response** tab. If you see rows of JSON, that's it
-7. Right-click the request → **Copy** → **Copy response**
-8. Paste into a file and attach it here
-
-**The trick that collapses "too many pages":** once you can see the request URL,
-it usually has a paging parameter — `?page=1&limit=25` or similar. Open that URL
-in a new tab with a much bigger limit (`&limit=1000`) and you'll often get every
-row in one response.
-
-## Route 2: scrape the tables from the page
-
-If there's no obvious JSON, this collects tables as you click through the pages
-and downloads the lot at the end. Nothing is sent anywhere; it all stays in your
-browser until you download it.
-
-Open DevTools → **Console** tab. Paste this **once per page**, after the table
-has loaded:
+1. Open the Manus site and **sign in as an admin** (several of these procedures
+   are admin-only)
+2. **F12** (or **⌥⌘I**) → **Console** tab
+3. Paste the whole block below and press Enter
+4. Wait — it fetches every rehearsal's attendance one at a time and logs its
+   progress
+5. It downloads `bvc-export.json`. Attach that here
 
 ```js
-(() => {
-  const rows = [];
-  document.querySelectorAll("table").forEach((table) => {
-    table.querySelectorAll("tr").forEach((tr) => {
-      const cells = [...tr.querySelectorAll("th,td")].map((c) =>
-        c.innerText.replace(/\s+/g, " ").trim(),
-      );
-      if (cells.some(Boolean)) rows.push(cells);
-    });
-  });
-  const all = JSON.parse(localStorage.getItem("__bvc_scrape") || "[]");
-  all.push({ url: location.href, at: new Date().toISOString(), rows });
-  localStorage.setItem("__bvc_scrape", JSON.stringify(all));
-  console.log(`captured ${rows.length} rows from this page; ${all.length} page(s) so far`);
-})();
-```
+(async () => {
+  const enc = (o) => encodeURIComponent(JSON.stringify(o));
 
-Click to the next page, paste again. Repeat. It tells you the running total each
-time.
+  // tRPC queries go over GET as ?batch=1&input={"0":{"json":<input>}}, and the
+  // superjson transformer wraps the reply the same way. Unwrap defensively, so
+  // a different transformer setting still yields something usable.
+  const get = async (proc, input) => {
+    const url = `/api/trpc/${proc}?batch=1&input=${enc({ 0: { json: input ?? null } })}`;
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(`${proc} → HTTP ${res.status}`);
+    const body = await res.json();
+    const slot = Array.isArray(body) ? body[0] : body;
+    if (slot?.error) throw new Error(`${proc} → ${slot.error?.json?.message ?? "error"}`);
+    return slot?.result?.data?.json ?? slot?.result?.data ?? slot;
+  };
 
-When you have been through every page, paste this **once** to download it:
+  const out = { takenAt: new Date().toISOString(), origin: location.origin };
 
-```js
-(() => {
-  const all = JSON.parse(localStorage.getItem("__bvc_scrape") || "[]");
-  const blob = new Blob([JSON.stringify(all, null, 2)], { type: "application/json" });
+  try {
+    console.log("members…");
+    out.members = await get("members.list");
+
+    console.log("rehearsals…");
+    out.sessions = await get("sessions.list");
+
+    console.log("pass orders…");
+    out.passOrders = await get("payments.allOrders");
+
+    out.attendance = {};
+    for (const s of out.sessions ?? []) {
+      console.log(`attendance for #${s.id} — ${s.title ?? ""}`);
+      out.attendance[s.id] = await get("attendance.forSession", { sessionId: s.id });
+    }
+
+    console.log(
+      `done: ${out.members?.length ?? 0} members, ${out.sessions?.length ?? 0} rehearsals, ` +
+        `${out.passOrders?.length ?? 0} pass orders`,
+    );
+  } catch (err) {
+    console.error("STOPPED:", err.message);
+    out.error = err.message;
+  }
+
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "manus-export.json";
+  a.download = "bvc-export.json";
   a.click();
-  console.log(`downloaded ${all.length} page(s)`);
 })();
 ```
 
-That puts `manus-export.json` in your Downloads folder. Attach it here.
+Nothing is sent anywhere — the fetches go to the site you are already on, and
+the file saves to your Downloads folder.
 
-To start over:
+## If it stops
 
-```js
-localStorage.removeItem("__bvc_scrape");
-```
+- **`HTTP 401` or `403`** — not signed in as an admin on that origin, or that
+  copy does not expose these procedures
+- **`HTTP 404`** — the API is not at `/api/trpc` on that host. Find the real
+  path: DevTools → **Network** → **Fetch/XHR** → reload → click any request
+  whose name contains a dot (like `auth.me,sessions.list`) → **Headers** →
+  **Request URL**. Send me that URL and I will adjust the snippet.
+- **Anything else** — paste the console output here.
 
-## What is actually needed
+It downloads the file either way, including whatever it managed to collect
+before stopping, so a partial result is still worth attaching.
 
-Only two things, so don't capture more than this:
+## What happens next
 
-1. **The 6 October rehearsal** — who attended, and whether each used a pass, a
-   single, or a complimentary session
-2. **Payments since 26 September** — member, amount, method, date
-
-Member names as Manus shows them are fine; they get matched to the 76 member
-rows on this side.
-
-## Then
-
-Attach the file (or the JSON) here and the rest is automatic: it gets matched
-against what is already in the database, and anything already present is left
-alone rather than duplicated.
+Attached here, the file gets diffed against the live database: which rehearsals
+are missing, who attended each, and which pass orders differ in status. The
+output is a worked checklist with anything already recorded filtered out.
 
 Attendance still goes in through the admin UI rather than straight into the
 database — marking someone present deducts a pass session and writes an activity
-log entry (`routers.ts:472`), and writing rows directly skips both. But with the
-data in hand that becomes a checklist to work through, not a transcription job.
+log entry (`routers.ts:472`), and inserting rows skips both. But that becomes
+ticking a prepared list rather than reading two systems at once.
