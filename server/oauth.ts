@@ -36,9 +36,14 @@ import { db, sameEmail } from "../db";
 import { users } from "../drizzle/schema";
 import { COOKIE_NAME } from "@shared/const";
 
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days in seconds, as in auth.ts
+// Both in MILLISECONDS, which is what Express's res.cookie wants — see the
+// note in auth.ts. Written in seconds, the state cookie below would have been
+// 600ms: expired before the member got back from Google, so every provider
+// sign-in would have failed the state check and blamed the member for taking
+// too long.
+const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days, as in auth.ts
 const STATE_COOKIE = "__oauth_state";
-const STATE_MAX_AGE = 10 * 60; // the round trip to a provider and back
+const STATE_MAX_AGE = 10 * 60 * 1000; // the round trip to a provider and back
 
 /** The profile each provider is reduced to before anything is done with it. */
 type Profile = {
