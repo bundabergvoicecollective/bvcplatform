@@ -75,13 +75,16 @@ of 20, which came across from Manus as it stood.
 Reconcile the rest against Manus before anything else — attendance can be
 corrected next week, money is harder to reconstruct.
 
-## Before inviting the 76 members
+## Before inviting the members
+
+The `users` table holds 76 rows, but 4 of them are the denied sign-ups below,
+so **72 is the number of people to invite**.
 
 Checked 12 Oct against the live database:
 
 | | |
 | --- | --- |
-| **4 members are `pending` or `denied`** | They would set a password, sign in, and hit the "awaiting approval" screen (`client/components/BVCLayout.tsx:96`). To anyone non-technical that reads as "it didn't work". **Fix these first** — Admin → Members, approve them. |
+| **4 rows are `denied`, and none is a choir member** | Checked 13 Oct: all four have zero attendance, zero passes and no first name, and joined between 19 May and 2 June — one on an Apple private-relay address, one on a property-business domain. They are stray sign-ups from Manus's public registration, denied at the time, whose status came across with the import. **Do not approve them.** Leave them denied and keep them out of the invite list. An earlier version of this file said to approve them, which would have let four strangers into the site. Checked 13 Oct: the code refuses them anyway, in three independent places — `getAllMembers` excludes them from Admin → Members, `/api/auth/forgot` sends nothing to a `denied` user, and `BVCLayout` blocks them from the app. There is no bulk-invite procedure, so the recipient list is whatever is pasted into a mail tool; including one of these by hand is harmless. Note `/api/auth/forgot` refuses `denied` but not `pending`, and `/api/auth/register` makes new public sign-ups `pending` — so a future stray would get a link and then the holding screen. |
 | **8 members have no `firstName`** | `BVCLayout` force-redirects them to `/profile`, so their first sight of the site is a form rather than their dashboard. The 4 above are among these 8. |
 | 0 members have no email address | Everyone can be contacted. |
 | 0 duplicate addresses | No member's history is split across two rows. |
@@ -89,7 +92,8 @@ Checked 12 Oct against the live database:
 Members are described as older and not confident with technology, so the
 priority order for testing is what would make someone give up:
 
-1. Can they get in at all — the 4 blocked members above
+1. Can they get in at all — nobody is blocked by status now, but the invite
+   list has to exclude the 4 denied rows above
 2. The set-up email on a **phone**, including opened from the Facebook app.
    `client/components/MetaBrowserBanner.tsx` exists because Meta's in-app
    browser has a keyboard bug that cannot be fixed in code.
@@ -100,7 +104,7 @@ priority order for testing is what would make someone give up:
 6. Empty states — a member with no pass and no attendance should read as
    "nothing here yet", not broken
 
-Invite 2–3 members first, not 76. Ideally the least confident ones; they find
+Invite 2–3 members first, not all 72. Ideally the least confident ones; they find
 what the rest would.
 
 ## Tooling built for this
@@ -110,7 +114,7 @@ All under Actions, all read-only unless stated:
 | Workflow | What it does |
 | --- | --- |
 | **Database audit** → `emails` | Collation, unnormalised addresses, duplicate addresses |
-| **Database audit** → `members` | Who is blocked, who lacks a name, who is ready to invite |
+| **Database audit** → `members` | Who is blocked — named, with their history, so a real member whose status is wrong is distinguishable from a stray sign-up — who lacks a name, who is ready to invite |
 | **Database audit** → `recency` | Newest row per table; pass order totals |
 | **Database audit** → `schema` | Schema differences, report only |
 | **Database audit** → `manus` | The Manus catch-up. Reports unless `apply` is ticked, and safe to re-run. Reads the export from the `MANUS_DELTA_B64` secret, as JSON or gzipped base64 — not a committed file, because this repository is public and the export is member addresses, balances and payments |
@@ -142,7 +146,9 @@ in full. `docs/members-domain.md` is the full procedure.
 
 ## Still to do
 
-1. Approve the 4 blocked members
+1. ~~Approve the 4 blocked members.~~ Settled 13 Oct: none of them is a member.
+   Leave them denied; exclude them from the invite. That also means only 4 real
+   members lack a first name, not 8 — the other 4 are these rows
 2. Mark attendance for the 13 October rehearsal through the admin UI. The
    session row is already there, and this doubles as the first real test of
    attendance marking

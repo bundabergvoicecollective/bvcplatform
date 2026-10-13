@@ -18,12 +18,19 @@
  *                        instead of "Set your password for the new BVC members'
  *                        site". Confusing for someone who never had one.
  *
- * Counts only — no names, no addresses. GitHub Actions logs are readable by
- * anyone with repository access.
+ * Counts, plus a line per blocked member — "how many" is not enough to go and
+ * fix them. Addresses are masked, because GitHub Actions logs on a public
+ * repository are readable by anyone; --show-emails prints them in full and is
+ * for a local run only.
  *
  * Usage: DATABASE_URL=... tsx scripts/memberReadiness.ts
+ *        ... --show-emails    local runs only, never CI
  */
 import mysql from "mysql2/promise";
+
+const SHOW_EMAILS = process.argv.includes("--show-emails");
+const shown = (email: string | null) =>
+  !email ? "(no address)" : SHOW_EMAILS ? email : email.replace(/^(.{2})[^@]*(@.*)$/, "$1…$2");
 
 async function main() {
   const url = process.env.DATABASE_URL;
@@ -75,6 +82,43 @@ async function main() {
   const blocked = n(counts?.blocked);
   const noFirst = n(counts?.noFirstName);
   const noEmail = n(counts?.noEmail);
+
+  // Who they are, and whether they actually sing. Someone with attendance or a
+  // pass is a real member whose status is simply wrong; someone with neither,
+  // created long after the import, is more likely a stray sign-up — and the
+  // two want opposite actions, so the counts alone cannot be acted on.
+  if (blocked > 0) {
+    const rows = await query<
+      {
+        id: number;
+        email: string | null;
+        firstName: string | null;
+        status: string;
+        created: Date | null;
+        marks: number;
+        activePasses: number;
+      }[]
+    >(
+      `SELECT u.id AS id, u.email AS email, u.firstName AS firstName, u.status AS status,
+              u.createdAt AS created,
+              (SELECT count(*) FROM attendance a WHERE a.userId = u.id) AS marks,
+              (SELECT count(*) FROM passes p WHERE p.userId = u.id AND p.active = 1) AS activePasses
+         FROM users u
+        WHERE u.status IN ('pending','denied')
+        ORDER BY u.createdAt`,
+    );
+    console.log("\nBlocked members:");
+    for (const r of rows) {
+      const sings = Number(r.marks) > 0 || Number(r.activePasses) > 0;
+      console.log(
+        `  #${String(r.id).padEnd(8)} ${shown(r.email).padEnd(28)} ${r.status.padEnd(8)}` +
+          ` joined ${r.created ? r.created.toISOString().slice(0, 10) : "?"}` +
+          `  ${r.marks} mark(s), ${r.activePasses} active pass(es)` +
+          `  ${sings ? "— a real member, status is simply wrong" : "— no history at all"}` +
+          `${r.firstName ? "" : ", and no first name"}`,
+      );
+    }
+  }
 
   console.log();
   if (blocked > 0) {
