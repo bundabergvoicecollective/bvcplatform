@@ -63,16 +63,18 @@ export async function createSquarePaymentLink(opts: {
 /** Look up a Square order by its orderId and return whether it has been paid */
 export async function getSquareOrderStatus(orderId: string): Promise<{ paid: boolean; paymentId?: string; amountCents?: number } | null> {
   try {
-    // squareClient.orders.retrieve returns the order object
-    const response = await (squareClient.orders as unknown as { retrieve: (id: string) => Promise<unknown> }).retrieve(orderId);
-    const order = (response as { order?: Record<string, unknown> }).order;
+    // The SDK's method is get({ orderId }), not retrieve(orderId). It was
+    // called through an `as unknown as { retrieve }` cast, which satisfied the
+    // typechecker and threw "retrieve is not a function" at runtime — inside
+    // the catch below, so every order came back null and the admin sync
+    // reported them all as skipped. That reads exactly like "nobody has paid".
+    const response = await squareClient.orders.get({ orderId });
+    const order = response.order;
     if (!order) return null;
-    const state = order.state as string | undefined;
-    const tenders = (order.tenders ?? []) as Array<Record<string, unknown>>;
-    const paid = state === "COMPLETED" || tenders.length > 0;
-    const paymentId = tenders[0]?.paymentId as string | undefined;
-    const totalMoney = order.totalMoney as { amount?: bigint | number } | undefined;
-    const amountCents = totalMoney?.amount ? Number(totalMoney.amount) : undefined;
+    const tenders = order.tenders ?? [];
+    const paid = order.state === "COMPLETED" || tenders.length > 0;
+    const paymentId = tenders[0]?.paymentId ?? undefined;
+    const amountCents = order.totalMoney?.amount != null ? Number(order.totalMoney.amount) : undefined;
     return { paid, paymentId, amountCents };
   } catch (err) {
     console.warn(`[Square] Could not retrieve order ${orderId}:`, err);
