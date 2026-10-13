@@ -11,6 +11,7 @@ import { verifySquareWebhook } from "../square";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { asyncRoute } from "./asyncRoute";
 import { registerAuthRoutes } from "./auth";
+import { registerOAuthRoutes } from "./oauth";
 import { registerEmailCheck } from "./emailCheck";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
@@ -279,6 +280,7 @@ async function startServer() {
 
   registerStorageProxy(app);
   registerAuthRoutes(app);
+  registerOAuthRoutes(app);
   registerEmailCheck(app);
 
   // ── Multipart upload: Music Library ──────────────────────────────────────

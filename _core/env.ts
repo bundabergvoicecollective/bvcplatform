@@ -9,6 +9,14 @@ export const ENV = {
   // openId of the account auto-promoted to admin on first sign-in
   // (format: "email:<address>"). Unset means no auto-promotion.
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
+  // Social sign-in. A provider with either value unset is not advertised on
+  // the login page and its routes 404 — the same degrade-rather-than-fail rule
+  // as R2 and Square below. Both also need APP_URL, because the redirect URI
+  // has to match the provider console exactly; see server/oauth.ts.
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  facebookAppId: process.env.FACEBOOK_APP_ID ?? "",
+  facebookAppSecret: process.env.FACEBOOK_APP_SECRET ?? "",
   // Cloudflare R2
   r2AccountId: process.env.R2_ACCOUNT_ID ?? "",
   r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? "",
