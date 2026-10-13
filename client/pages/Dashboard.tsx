@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { format, isAfter, isBefore, addDays } from "date-fns";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { getDisplayName } from "@shared/const";
 
@@ -324,6 +325,139 @@ function IncomeWidget() {
   );
 }
 
+/**
+ * Week-on-week income, admin only.
+ *
+ * The bar colour is the brand gold nudged from chroma 0.10 to 0.11. At 0.10 it
+ * falls under the chroma floor and reads as grey on a white card; 0.11 is the
+ * nearest step that passes, and the shift is imperceptible beside the rest of
+ * the brand gold on this page.
+ *
+ * One series, so no legend — the card title names the measure. Pending money
+ * is deliberately not drawn: it is not income, and a second series would
+ * invite reading it as though it were.
+ */
+const INCOME_BAR = "oklch(0.55 0.11 75)";
+const INK = "oklch(0.22 0.07 240)";
+const INK_MUTED = "oklch(0.52 0.03 240)";
+
+function WeeklyIncomeChart() {
+  const { data, isLoading } = trpc.dashboard.weeklyIncome.useQuery();
+
+  const money = (cents: number) =>
+    `$${(cents / 100).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const whole = (cents: number) => `$${Math.round(cents / 100).toLocaleString("en-AU")}`;
+
+  if (isLoading) return <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />;
+
+  const weeks = data?.weeks ?? [];
+  const received = weeks.reduce((n, w) => n + w.cents, 0);
+
+  // A date-only string through `new Date()` is parsed as UTC midnight and then
+  // rendered in the viewer's zone, which shows the day before for anyone west
+  // of Greenwich. Build it as a local date instead.
+  const localDate = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+
+  const rows = weeks.map((w) => {
+    const start = localDate(w.weekStart);
+    return {
+      label: format(start, "d MMM"),
+      range: `${format(start, "EEE d MMM")} – ${format(addDays(start, 6), "EEE d MMM")}`,
+      dollars: w.cents / 100,
+      cents: w.cents,
+    };
+  });
+
+  // This week is still running, so it is shown as a figure in its own right
+  // rather than compared against a finished week as though it were one.
+  const thisWeek = weeks[weeks.length - 1]?.cents ?? 0;
+  const lastWeek = weeks[weeks.length - 2]?.cents ?? 0;
+
+  return (
+    <Card className="border-0 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ color: INK }}>
+          <Banknote className="w-4 h-4" style={{ color: INCOME_BAR }} />
+          Income by week
+        </CardTitle>
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 pt-1">
+          <span className="text-sm" style={{ color: INK_MUTED }}>
+            This week so far{" "}
+            <span className="text-lg font-semibold tabular-nums" style={{ color: INK }}>
+              {money(thisWeek)}
+            </span>
+          </span>
+          <span className="text-sm" style={{ color: INK_MUTED }}>
+            Last week <span className="font-semibold tabular-nums">{money(lastWeek)}</span>
+          </span>
+          <span className="text-sm" style={{ color: INK_MUTED }}>
+            {weeks.length} weeks <span className="font-semibold tabular-nums">{money(received)}</span>
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-1">
+        {received === 0 ? (
+          <p className="text-sm py-8 text-center" style={{ color: INK_MUTED }}>
+            No payments recorded in the last {weeks.length} weeks.
+          </p>
+        ) : (
+          <div className="h-48 -ml-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap="22%">
+                {/* Recessive: horizontal rules only, no vertical lines, no axis spines */}
+                <CartesianGrid vertical={false} stroke="oklch(0.92 0.01 240)" />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                  tick={{ fontSize: 10, fill: "oklch(0.52 0.03 240)" }}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  width={48}
+                  tick={{ fontSize: 10, fill: "oklch(0.52 0.03 240)" }}
+                  tickFormatter={(v: number) => `$${v.toLocaleString("en-AU")}`}
+                />
+                <Tooltip
+                  cursor={{ fill: "oklch(0.95 0.01 240)" }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const row = payload[0].payload as (typeof rows)[number];
+                    return (
+                      <div className="rounded-lg border bg-white px-3 py-2 shadow-sm">
+                        <p className="text-xs" style={{ color: INK_MUTED }}>{row.range}</p>
+                        <p className="text-sm font-semibold tabular-nums" style={{ color: INK }}>
+                          {money(row.cents)}
+                        </p>
+                      </div>
+                    );
+                  }}
+                />
+                {/* 4px rounded ends on the data end only, anchored to the baseline */}
+                <Bar dataKey="dollars" fill={INCOME_BAR} radius={[4, 4, 0, 0]} maxBarSize={26} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 text-xs" style={{ color: INK_MUTED }}>
+          <span>
+            Money received, Monday to Sunday. Pass sales and shop orders.
+            {data?.pendingCents ? ` ${whole(data.pendingCents)} pending is not counted.` : ""}
+          </span>
+          <a href="/payments" className="underline whitespace-nowrap">
+            Every payment
+          </a>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AdminDashboard() {
   const { data: stats, isLoading } = trpc.dashboard.adminStats.useQuery();
   const { data: lastSession } = trpc.attendance.lastSessionStats.useQuery();
@@ -458,6 +592,9 @@ function AdminDashboard() {
 
           {/* Income widget */}
           <IncomeWidget />
+
+          {/* Week-on-week income — admin only, as the whole block is */}
+          <WeeklyIncomeChart />
         </div>
       )}
 
