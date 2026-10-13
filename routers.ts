@@ -137,6 +137,7 @@ import {
   getExpiredPasses,
   getLowPasses,
   getLastSessionIncome,
+  getWeeklyIncome,
   createGalleryPost,
   insertGalleryMedia,
   listApprovedGalleryPosts,
@@ -1467,6 +1468,11 @@ const coreRouter = router({
     }),
     expiredPasses: adminProcedure.query(() => getExpiredPasses()),
     lowPasses: adminProcedure.query(() => getLowPasses()),
+    // adminProcedure, not protectedProcedure: hiding the card in the client
+    // would still serve the choir's takings to any member who called this.
+    weeklyIncome: adminProcedure
+      .input(z.object({ weeks: z.number().int().min(4).max(52).default(12) }).optional())
+      .query(({ input }) => getWeeklyIncome(input?.weeks ?? 12)),
     lastSessionIncome: adminProcedure.query(async () => {
       const base = await getLastSessionIncome();
       if (!base) return null;

@@ -12,6 +12,17 @@ that need a human decision, and testing attendance before it is relied on.
 
 **Live at https://members.bundabergvoicecollective.com.au**
 
+> ## No invitations until Andy says so
+>
+> Standing instruction, 13 Oct. Do not send any member email — not an invite,
+> not a set-up link, not a test to a real address — until Andy asks for it. He
+> is announcing the move at rehearsal and will decide when invitations go out.
+>
+> Three things can email a member, all of them triggered by a person clicking
+> in the admin UI and none by any script here: the `invites.create` mutation,
+> the "Set up / forgot password" form, and receipt resends. Leave them alone.
+> `scripts/resetMemberForTesting.ts` clears a password but sends nothing.
+
 The `run.app` host (`https://bvc-production-aoxblokwyq-ts.a.run.app`) still
 serves the same app and still works. It is simply not what members are told.
 Note the two are **separate cookie scopes**: signing in on one does not sign you
@@ -35,6 +46,14 @@ in on the other, which has caused confusing "Admins only" errors more than once.
   `init` → `chunk` → `complete`, 5 MB a chunk). Different routes from Gallery.
 - Square is not configured, so online pass purchase and the shop will not work.
   Cash and manual pass recording are unaffected.
+- **Google and Facebook sign-in.** Built 13 Oct (`server/oauth.ts`) because
+  Manus offered them and the migration had dropped them. Both are off until
+  their secrets are set, so nothing can be tested yet and the login page is
+  unchanged. An address matching a member signs that member in and writes
+  nothing — if that linking ever failed, every member doing it would get a
+  blank account, so it is the first thing to check once Google is configured.
+  `docs/social-login.md` has the console steps. Google needs no app review;
+  Facebook may need Meta Business Verification, so it is the optional half.
 
 ## The data gap — closed 13 Oct
 
@@ -160,9 +179,15 @@ in full. `docs/members-domain.md` is the full procedure.
    the addresses attached to a pass, order or attendance mark
 5. Walk the set-up journey on a phone (the test account is password-less and
    ready — `mclucas.andy@gmail.com`)
-6. Invite 2–3 members, then the rest
-7. Put `docs/manus-redirect.html` on the old Manus app, so bookmarks and
+6. Create the Google OAuth client and add its two secrets, then test the
+   linking on that same account — `docs/social-login.md`. Worth doing before
+   invitations: members who struggle with passwords get a one-tap way in, and
+   adding it later means teaching them a second method
+7. Invite 2–3 members, then the rest — **only when Andy says so**, see the
+   standing instruction at the top of this file
+8. Put `docs/manus-redirect.html` on the old Manus app, so bookmarks and
    home-screen icons still reach the new site. It lives only while that app
    stays deployed, so it buys a window rather than being permanent.
-8. Optional: Square secrets (passes and shop only), Artifact Registry cleanup
-   policy, fill in the 8 missing first names
+9. Optional: Facebook sign-in (`docs/social-login.md` — may need Meta Business
+   Verification), Square secrets (passes and shop only), Artifact Registry
+   cleanup policy, fill in the 4 real members' missing first names

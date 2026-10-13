@@ -2536,6 +2536,84 @@ export async function getLastSessionIncome() {
   };
 }
 
+// ─── Dashboard: Week-on-week income ──────────────────────────────────────────
+
+/**
+ * Money actually received, totalled per week, for the admin dashboard chart.
+ *
+ * Only `paid` rows count. The pending total is returned alongside as a single
+ * figure rather than being bucketed into the weeks, because a pending order is
+ * not income and drawing it as though it were would overstate every week it
+ * appeared in — there is $3,090 of it, most of one member's double-clicked
+ * checkout (see docs/migration-status.md).
+ *
+ * WEEKS ARE BRISBANE WEEKS, MONDAY TO SUNDAY. Timestamps are stored in UTC, so
+ * a Monday-morning payment in Bundaberg belongs to the week that, in UTC, had
+ * not started yet. Queensland does not observe daylight saving, so a flat +10
+ * is exactly right all year and needs none of MySQL's timezone tables — which
+ * TiDB may not have loaded, making CONVERT_TZ return NULL rather than fail.
+ *
+ * The bucketing is done in SQL and returned as a 'YYYY-MM-DD' string on
+ * purpose. This connection sets neither `timezone` nor `dateStrings`, so
+ * mysql2 would parse a date column using the Node process's own timezone —
+ * which is UTC on Cloud Run today, and a silent one-day shift the moment that
+ * is not true. A string cannot be misparsed.
+ */
+export async function getWeeklyIncome(weeks = 12) {
+  const empty = { weeks: [] as { weekStart: string; cents: number }[], pendingCents: 0 };
+  if (!db) return empty;
+
+  // WEEKDAY() is 0 for Monday, so subtracting it lands on that week's Monday.
+  // Typed as SQL<string> so the grouped column is a string on the way out
+  // rather than `unknown`; sql.raw() alone carries no type. The column name is
+  // a literal from the two call sites below, never input.
+  const weekStart = (column: string) => sql<string>`
+    DATE_FORMAT(DATE_SUB(DATE_ADD(${sql.raw(column)}, INTERVAL 10 HOUR),
+      INTERVAL WEEKDAY(DATE_ADD(${sql.raw(column)}, INTERVAL 10 HOUR)) DAY), '%Y-%m-%d')`;
+
+  const [passRows, shopRows, pending] = await Promise.all([
+    db
+      .select({ weekStart: weekStart("createdAt"), cents: sql<number>`sum(amountCents)` })
+      .from(passOrders)
+      .where(eq(passOrders.status, "paid"))
+      .groupBy(weekStart("createdAt")),
+    db
+      .select({ weekStart: weekStart("createdAt"), cents: sql<number>`sum(totalCents)` })
+      .from(shopOrders)
+      .where(eq(shopOrders.status, "paid"))
+      .groupBy(weekStart("createdAt")),
+    db
+      .select({ cents: sql<number>`sum(amountCents)` })
+      .from(passOrders)
+      .where(eq(passOrders.status, "pending")),
+  ]);
+
+  // Passes and shop sales are both just money in, so they add into one bar.
+  // Keeping them apart would need a second series and a legend to answer a
+  // question nobody asked: there are two shop orders in the table's history.
+  const byWeek = new Map<string, number>();
+  for (const row of [...passRows, ...shopRows]) {
+    if (!row.weekStart) continue;
+    byWeek.set(row.weekStart, (byWeek.get(row.weekStart) ?? 0) + Number(row.cents ?? 0));
+  }
+
+  // Every week in the window appears, including the empty ones. Skipping a week
+  // with no income would draw a continuous run of good weeks and hide the
+  // quiet one in the middle, which is the opposite of the truth.
+  const now = new Date(Date.now() + 10 * 60 * 60 * 1000); // Brisbane "today"
+  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7)); // Sunday is 0
+  const out: { weekStart: string; cents: number }[] = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const d = new Date(monday);
+    d.setUTCDate(d.getUTCDate() - i * 7);
+    const key = d.toISOString().slice(0, 10);
+    out.push({ weekStart: key, cents: byWeek.get(key) ?? 0 });
+  }
+
+  return { weeks: out, pendingCents: Number(pending[0]?.cents ?? 0) };
+}
+
 // ─── Rehearsal Recording Access ───────────────────────────────────────────────
 
 /**
