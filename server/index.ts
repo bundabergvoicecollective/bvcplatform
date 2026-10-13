@@ -90,17 +90,30 @@ async function startServer() {
     async (req, res) => {
       const signature = req.headers["x-square-hmacsha256-signature"] as string ?? "";
       const signatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY ?? "";
-      const notificationUrl = process.env.SQUARE_WEBHOOK_URL ?? `${req.protocol}://${req.get("host")}/api/square/webhook`;
+      // Square signs over the notification URL it was configured with, so this
+      // must match that string exactly. It used to fall back to the request's
+      // own protocol and Host — but the Cloudflare Worker in front of this
+      // rewrites Host to the run.app name, and `trust proxy` is not set so
+      // req.protocol reads "http". Both would have been wrong, and the only
+      // symptom is every webhook failing verification. APP_URL is the origin
+      // for exactly this reason; see CLAUDE.md.
+      const notificationUrl =
+        process.env.SQUARE_WEBHOOK_URL || `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/api/square/webhook`;
       const body = req.body as Buffer;
       const bodyStr = body.toString("utf8");
 
-      // Verify signature if key is configured
-      if (signatureKey) {
-        const valid = await verifySquareWebhook(bodyStr, signature, signatureKey, notificationUrl);
-        if (!valid) {
-          console.warn("[Square Webhook] Invalid signature — rejecting");
-          return res.status(400).json({ error: "Invalid signature" });
-        }
+      // No key means no way to tell Square from anyone else, and this handler
+      // grants live stream access and marks orders paid. It refuses rather
+      // than trusting the caller: unconfigured must not mean unprotected.
+      // 503 rather than 400 so Square's retries survive a key being added late.
+      if (!signatureKey) {
+        console.error("[Square Webhook] SQUARE_WEBHOOK_SIGNATURE_KEY is not set — refusing the call.");
+        return res.status(503).json({ error: "Webhook not configured" });
+      }
+      const valid = await verifySquareWebhook(bodyStr, signature, signatureKey, notificationUrl);
+      if (!valid) {
+        console.warn("[Square Webhook] Invalid signature — rejecting");
+        return res.status(400).json({ error: "Invalid signature" });
       }
 
       let event: Record<string, unknown>;

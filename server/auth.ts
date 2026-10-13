@@ -67,7 +67,11 @@ function buildResetEmail(name: string, link: string, firstTime: boolean) {
 }
 
 import { COOKIE_NAME } from "@shared/const";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days in seconds
+// MILLISECONDS. Express's res.cookie takes maxAge in ms and divides by 1000
+// for the Max-Age header, so the seconds figure that used to be here produced
+// Max-Age=2592 — a session that died 43 minutes after signing in. That is what
+// "I keep getting logged out" was.
+const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 function cookieOptions(maxAge: number) {
   return {
