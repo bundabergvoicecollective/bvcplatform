@@ -42,7 +42,7 @@ function createTransport() {
 }
 
 /**
- * Sends an admin notification email to the BVC admin email address.
+ * Sends an admin notification email to ENV.ownerEmail.
  * Returns true on success, false on failure (non-throwing).
  */
 export async function notifyOwner(payload: NotificationPayload): Promise<boolean> {
@@ -57,7 +57,7 @@ export async function notifyOwner(payload: NotificationPayload): Promise<boolean
     const transport = createTransport();
     await transport.sendMail({
       from: ENV.smtpFrom,
-      to: "admin@bundabergvoicecollective.com.au",
+      to: ENV.ownerEmail,
       subject: `[BVC Admin] ${title}`,
       text: content,
       html: `<p>${content.replace(/\n/g, "<br>")}</p>`,
