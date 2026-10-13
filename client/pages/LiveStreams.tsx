@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -46,6 +46,22 @@ type StreamItem = {
 };
 
 /** Returns the effective end time for a stream: endsAt if set, otherwise scheduledAt + 3 hours */
+/**
+ * A new rehearsal defaults to tonight at 6:30pm, which is when they are.
+ *
+ * This is not a convenience. A `datetime-local` whose segments are not ALL
+ * filled reports value "" and validity.badInput — so a field reading
+ * "13/10/2026, 06:30 pm" with one segment still blank is indistinguishable
+ * from an empty one, and the form says "required" about something the admin
+ * can plainly see they filled in. Arriving pre-filled and valid means the
+ * usual case never touches the control at all.
+ */
+function defaultStartValue(): string {
+  const d = new Date();
+  d.setHours(18, 30, 0, 0);
+  return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
 function getStreamEndTime(stream: StreamItem): Date {
   if (stream.endsAt) return new Date(stream.endsAt);
   const start = new Date(stream.scheduledAt);
@@ -67,8 +83,9 @@ function StreamFormDialog({
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [streamUrl, setStreamUrl] = useState(initial?.streamUrl ?? "");
+  const startRef = useRef<HTMLInputElement>(null);
   const [scheduledAt, setScheduledAt] = useState(
-    initial ? format(new Date(initial.scheduledAt), "yyyy-MM-dd'T'HH:mm") : ""
+    initial ? format(new Date(initial.scheduledAt), "yyyy-MM-dd'T'HH:mm") : defaultStartValue()
   );
   const [endsAt, setEndsAt] = useState(
     initial?.endsAt ? format(new Date(initial.endsAt), "yyyy-MM-dd'T'HH:mm") : ""
@@ -79,7 +96,7 @@ function StreamFormDialog({
     setDescription(initial?.description ?? "");
     setStreamUrl(initial?.streamUrl ?? "");
     setScheduledAt(
-      initial ? format(new Date(initial.scheduledAt), "yyyy-MM-dd'T'HH:mm") : ""
+      initial ? format(new Date(initial.scheduledAt), "yyyy-MM-dd'T'HH:mm") : defaultStartValue()
     );
     setEndsAt(
       initial?.endsAt ? format(new Date(initial.endsAt), "yyyy-MM-dd'T'HH:mm") : ""
@@ -99,8 +116,28 @@ function StreamFormDialog({
   const loading = create.isPending || update.isPending;
 
   function handleSubmit() {
-    if (!title.trim() || !streamUrl.trim() || !scheduledAt) {
-      toast.error("Title, stream URL, and date/time are required");
+    // A part-entered date reads as "" exactly like an untouched one, so the
+    // control is asked which it is. Saying "required" about a field showing a
+    // date is how this cost an evening.
+    if (!scheduledAt && startRef.current?.validity.badInput) {
+      toast.error(
+        "The start date and time is only partly filled in. Check the day, month, year, hour, minute and am/pm — the browser ignores it until every part is set.",
+      );
+      return;
+    }
+    const missing = [
+      !title.trim() && "a title",
+      !streamUrl.trim() && "the stream URL",
+      !scheduledAt && "the start date and time",
+    ].filter(Boolean);
+    if (missing.length) {
+      toast.error(`Still needs ${missing.join(", ")}.`);
+      return;
+    }
+    if (endsAt && new Date(endsAt) <= new Date(scheduledAt)) {
+      // Otherwise the stream is created already over: getStreamEndTime puts it
+      // in the past, so it shows as Past and no member can join it.
+      toast.error("The end time is before the start time, so nobody would be able to join. Check am/pm.");
       return;
     }
     const data = {
@@ -138,7 +175,7 @@ function StreamFormDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Start Date & Time *</Label>
-            <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+            <Input ref={startRef} type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>End Time <span className="text-muted-foreground text-xs">(optional — stream stays joinable until this time)</span></Label>
