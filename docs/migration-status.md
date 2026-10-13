@@ -1,14 +1,14 @@
 # BVC migration — where things stand
 
-Last updated 12 Oct 2026. Written so a session starting cold can pick this up
+Last updated 13 Oct 2026. Written so a session starting cold can pick this up
 without the preceding conversation.
 
 ## The short version
 
-The platform is live, the member data is clean, and the thing that blocked
-everything — password set-up emails — works. What is left is a small data
-catch-up, a handful of member-record fixes, and testing attendance before it is
-relied on.
+The platform is live, the member data is clean, the thing that blocked
+everything — password set-up emails — works, and the Manus catch-up has been
+applied. What is left is a handful of member-record fixes, two reconciliations
+that need a human decision, and testing attendance before it is relied on.
 
 **Live at https://members.bundabergvoicecollective.com.au**
 
@@ -28,41 +28,52 @@ in on the other, which has caused confusing "Admins only" errors more than once.
 ## Not yet tested
 
 - **Attendance marking.** The core of a rehearsal night, and nobody has marked a
-  single person present on the live site. The code is at `routers.ts:472` and
+  single person present on the live site. The 6 October marks were inserted by
+  the importer, which does not exercise this path at all. The code is at `routers.ts:472` and
   handles pass deduction, un-marking and restore, but it has never been run.
 - Music Library upload, and Rehearsal Recordings upload (the chunked path —
   `init` → `chunk` → `complete`, 5 MB a chunk). Different routes from Gallery.
 - Square is not configured, so online pass purchase and the shop will not work.
   Cash and manual pass recording are unaffected.
 
-## The data gap
+## The data gap — closed 13 Oct
 
-Everything stops on **29 September 2026** — rehearsals, attendance, passes,
-activity log, library, all on the same date. That is a one-time snapshot, not
-drift. Nothing has been written since except sign-ins.
+Everything used to stop on **29 September 2026**. The catch-up ran that morning
+from Actions (**Database audit → `manus`**, with `apply` ticked) against an
+export taken 12 Oct 21:41 UTC, and wrote 44 rows: both missing rehearsals, 33
+attendance marks for 6 October, 9 pass orders and 33 pass balances. The
+importer re-read every active balance afterwards and reported them all matching
+Manus; the `recency` audit agreed from the other side — 15 rehearsals, 485
+attendance marks, 109 pass orders, 64 active passes.
 
-So what is missing is small and specific:
+Running it again is harmless and reports nothing to do, which is how to check
+this rather than trusting the paragraph above.
 
-- **The 6 October rehearsal**, and its attendance and pass deductions
-- Payments since 26 September
-- Any members who joined since 15 September
+Two things it deliberately did not do:
 
-**There is no Manus import tooling in this repository**, and no route to Manus
-from a cloud session. Getting this across means one of: a Manus export file,
-screenshots read by hand, or typing it into the admin UI while reading Manus.
-For one rehearsal, typing it in is faster than building an importer — and it
-doubles as the attendance test above.
-
-Do not write attendance rows directly to the database. Marking someone present
-deducts a pass session and writes an activity-log entry; bypassing that leaves
-balances wrong in ways that surface weeks later.
+- **The activity log still stops on 29 September.** Attendance was inserted
+  directly, and that is precisely what makes the import safe: a direct insert
+  deducts nothing, so each balance set from Manus is counted exactly once, and
+  tonight's marking through the UI deducts the next one. The cost is that those
+  33 marks have no activity-log entry. Nothing reads the log to work out a
+  balance; it is a history view.
+- **Nothing was invented for a pass Manus does not list.** One remains: a
+  member holds 1 of 10 here and no active pass in Manus. They attended 6
+  October on a pass, so Manus almost certainly took them to zero and closed it
+  — and their $140 10-pass order has sat `pending` since 29 September. This is
+  the 378th outstanding session against the export's 377. Run the `manus` audit
+  to see who; it is masked in the log because this repository is public.
 
 ### The financial item
 
-**21 pass orders sit `pending`, totalling $2,250**, against 79 paid totalling
-$2,483. Nearly half the money is unresolved. Each is either genuinely unpaid or
-was paid in Manus after the snapshot. Reconcile against Manus before anything
-else — attendance can be corrected next week, money is harder to reconstruct.
+**27 pass orders sit `pending`, totalling $3,090**, against 82 paid totalling
+$2,779. Of the pending, **$700 is one member**, who placed six $140 orders
+inside eight minutes on 6 October — five `pending`, one `paid`. That is a
+double-click on the pay button, not six purchases, and their balance reads 22
+of 20, which came across from Manus as it stood.
+
+Reconcile the rest against Manus before anything else — attendance can be
+corrected next week, money is harder to reconstruct.
 
 ## Before inviting the 76 members
 
@@ -102,6 +113,7 @@ All under Actions, all read-only unless stated:
 | **Database audit** → `members` | Who is blocked, who lacks a name, who is ready to invite |
 | **Database audit** → `recency` | Newest row per table; pass order totals |
 | **Database audit** → `schema` | Schema differences, report only |
+| **Database audit** → `manus` | The Manus catch-up. Reports unless `apply` is ticked, and safe to re-run. Reads the export from the `MANUS_DELTA_B64` secret, as JSON or gzipped base64 — not a committed file, because this repository is public and the export is member addresses, balances and payments |
 | **DNS snapshot** | Live DNS records, from the authoritative nameservers |
 | **Site health** | Daily; fails if the website stops answering |
 | **Cloudflare DNS** | Creates the zone's records via the API (needs `CLOUDFLARE_API_TOKEN`) |
@@ -131,13 +143,20 @@ in full. `docs/members-domain.md` is the full procedure.
 ## Still to do
 
 1. Approve the 4 blocked members
-2. Reconcile the 21 pending pass orders against Manus
-3. Enter the 6 October rehearsal and its attendance
-4. Walk the set-up journey on a phone (the test account is password-less and
+2. Mark attendance for the 13 October rehearsal through the admin UI. The
+   session row is already there, and this doubles as the first real test of
+   attendance marking
+3. Void the 5 duplicate pending orders, and settle the member whose pass and
+   pending order both need a decision (both named under "The data gap" above)
+4. ~~Add the members who joined Manus after the snapshot.~~ Both Carolyn Rose
+   and Tarin Dobbie already have accounts here, confirmed 13 Oct once the
+   `manus` audit started resolving the export's members list rather than only
+   the addresses attached to a pass, order or attendance mark
+5. Walk the set-up journey on a phone (the test account is password-less and
    ready — `mclucas.andy@gmail.com`)
-5. Invite 2–3 members, then the rest
-6. Put `docs/manus-redirect.html` on the old Manus app, so bookmarks and
+6. Invite 2–3 members, then the rest
+7. Put `docs/manus-redirect.html` on the old Manus app, so bookmarks and
    home-screen icons still reach the new site. It lives only while that app
    stays deployed, so it buys a window rather than being permanent.
-7. Optional: Square secrets (passes and shop only), Artifact Registry cleanup
+8. Optional: Square secrets (passes and shop only), Artifact Registry cleanup
    policy, fill in the 8 missing first names

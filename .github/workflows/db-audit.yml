@@ -1,10 +1,12 @@
-# Read-only database audits, run on demand.
+# Database audits and the Manus catch-up, run on demand.
 #
-# The cloud container these sessions run in cannot reach the deployed site, so
-# the admin diagnostics at /api/admin/email-check are only reachable from a
-# browser. This runs the same questions against the database directly.
+# The cloud container these sessions run in cannot reach the deployed site or
+# the database, so the admin diagnostics at /api/admin/email-check are only
+# reachable from a browser. This runs the same questions against the database
+# directly.
 #
-# Nothing here writes. Pick the audit from the dropdown when dispatching.
+# Every audit is read-only. The one exception is `manus`, which still reports
+# by default and writes only when `apply` is ticked.
 name: Database audit
 
 on:
@@ -20,6 +22,12 @@ on:
           - members
           - recency
           - schema
+          - manus
+      apply:
+        description: "Write the changes (manus only — everything else ignores this)"
+        type: boolean
+        required: false
+        default: false
 
 env:
   # TiDB connection details (not secret; the password is the DB_PASSWORD secret)
@@ -77,6 +85,53 @@ jobs:
       - name: Check how current the data is
         if: inputs.audit == 'recency'
         run: pnpm exec tsx scripts/dataRecency.ts
+
+      # Brings across what Manus recorded after the 29 September snapshot: the
+      # rehearsals, their attendance, the pass orders and the balances.
+      #
+      # The export is real member data and this repository is public, so it
+      # arrives as the MANUS_DELTA_B64 secret rather than a committed file or a
+      # dispatch input, both of which would be world-readable. The importer
+      # masks addresses in its output for the same reason.
+      #
+      # The secret may hold the export either as JSON or gzipped and base64'd —
+      # the name predates the first form. Both are accepted, because pasting
+      # 3.8 KB of base64 correctly is a worse thing to ask of someone than
+      # pasting the file they already have.
+      - name: Catch up from Manus
+        if: inputs.audit == 'manus'
+        env:
+          MANUS_DELTA_B64: ${{ secrets.MANUS_DELTA_B64 }}
+          # A `type: boolean` input reads as a boolean through `inputs` but as a
+          # string through `github.event.inputs`, so it is compared as text here
+          # rather than interpolated into the script.
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$MANUS_DELTA_B64" ]; then
+            echo "::error::MANUS_DELTA_B64 is not set. Add the export as a repository secret first."
+            exit 1
+          fi
+          printf '%s' "$MANUS_DELTA_B64" > /tmp/delta.in
+          valid() { node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$1" 2>/dev/null; }
+
+          if valid /tmp/delta.in; then
+            echo "The secret holds the export as JSON."
+            cp /tmp/delta.in /tmp/manus-delta.json
+          elif tr -d '[:space:]' < /tmp/delta.in | base64 -di 2>/dev/null | gunzip > /tmp/manus-delta.json 2>/dev/null \
+               && valid /tmp/manus-delta.json; then
+            echo "The secret holds the export gzipped and base64 encoded."
+          else
+            # Enough to tell a truncated paste from a mangled one, with none of
+            # the content, which matters in a public log.
+            LEN=$(wc -c < /tmp/delta.in)
+            echo "::error::The secret is neither JSON nor gzipped base64. It holds $LEN characters; the export is 24453 as JSON or 3808 encoded. A truncated paste is the usual cause."
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/importManusDelta.ts --file=/tmp/manus-delta.json --apply
+          else
+            pnpm exec tsx scripts/importManusDelta.ts --file=/tmp/manus-delta.json
+          fi
 
       # Report only — no --apply, so this never changes the schema. The deploy
       # workflow is what applies it.
