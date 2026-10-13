@@ -6,6 +6,13 @@ export const ENV = {
   // build emailed invite and password links so they never depend on the
   // request's Host header or on the sender's browser.
   appUrl: process.env.APP_URL ?? "",
+  // Where the platform's own notices go — a member's first sign-in, a Square
+  // purchase, a live stream purchase. It was hardcoded to
+  // admin@bundabergvoicecollective.com.au, which cannot receive anything: the
+  // zone carries no MX records at all (docs/dns-before-move.md), so every one
+  // of those notices has gone nowhere. A setting rather than a constant, so
+  // the next change is a secret and not a deploy.
+  ownerEmail: process.env.OWNER_EMAIL ?? "bundabergvoicecollective@gmail.com",
   // openId of the account auto-promoted to admin on first sign-in
   // (format: "email:<address>"). Unset means no auto-promotion.
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",

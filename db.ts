@@ -2536,6 +2536,25 @@ export async function getLastSessionIncome() {
   };
 }
 
+/**
+ * How many members have got into the new platform, and how many there are to
+ * get in. A password can only be set here, so it is the one unambiguous marker
+ * of having arrived — lastSignedIn carries values across from the Manus import
+ * and says nothing about this site. The denominator excludes the denied rows,
+ * which are stray public sign-ups rather than members.
+ */
+export async function countMembersSignedIn() {
+  if (!db) return { signedIn: 0, total: 0 };
+  const [row] = await db
+    .select({
+      signedIn: sql<number>`sum(passwordHash IS NOT NULL AND passwordHash <> '')`,
+      total: sql<number>`count(*)`,
+    })
+    .from(users)
+    .where(and(ne(users.status, "pending"), ne(users.status, "denied")));
+  return { signedIn: Number(row?.signedIn ?? 0), total: Number(row?.total ?? 0) };
+}
+
 // ─── Dashboard: Week-on-week income ──────────────────────────────────────────
 
 /**

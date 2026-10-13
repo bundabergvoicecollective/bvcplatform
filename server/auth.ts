@@ -11,7 +11,8 @@ import type { Express } from "express";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
-import { db, sameEmail } from "../db";
+import { countMembersSignedIn, db, sameEmail } from "../db";
+import { notifyOwner } from "../_core/notification";
 import { passwordResets, users } from "../drizzle/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
@@ -238,10 +239,50 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "This link has expired or has already been used. Please request a new one." });
       }
 
+      // Read the member before the write, to know whether this is the first
+      // time they have got in here. A password can only be set on this site, so
+      // going from none to one is the moment they arrived — lastSignedIn
+      // carries values over from the Manus import and cannot tell us that.
+      const [member] = await db.select().from(users).where(eq(users.id, reset.userId)).limit(1);
+      const firstTimeIn = !member?.passwordHash;
+
       const passwordHash = await bcrypt.hash(password, 12);
       await db.update(users).set({ passwordHash, lastSignedIn: new Date() }).where(eq(users.id, reset.userId));
       // Invalidate this and any other outstanding links for the member.
       await db.update(passwordResets).set({ usedAt: new Date() }).where(and(eq(passwordResets.userId, reset.userId), isNull(passwordResets.usedAt)));
+
+      // Tell the choir's inbox that someone is in, with the running total, so
+      // the migration can be watched without anyone running an audit. First
+      // time only: a notice on every sign-in would be dozens a day across 72
+      // members and would stop being read within a week.
+      //
+      // Deliberately after the write and never awaited into the response — the
+      // member is in whether or not the SMTP call succeeds, and they should not
+      // wait on it or see it fail.
+      if (firstTimeIn) {
+        // Awaited, not fired and forgotten: Cloud Run allocates CPU only while
+        // a request is in flight by default, so work started after the response
+        // can be frozen until the next request happens along — and the notice
+        // would go missing with nothing to show for it.
+        //
+        // Capped so the member never waits on our mail server. Whatever
+        // happens here, their password is already saved and they are signed in.
+        const notice = (async () => {
+          const { signedIn, total } = await countMembersSignedIn();
+          const who = [member?.firstName, member?.lastName].filter(Boolean).join(" ") || member?.name || "A member";
+          await notifyOwner({
+            title: `${who} has signed in`,
+            content:
+              `${who} (${member?.email ?? "no address"}) has set their password and signed in ` +
+              `to the new members' site for the first time.\n\n` +
+              `That is ${signedIn} of ${total} members now in.`,
+          });
+        })();
+        await Promise.race([
+          notice.catch((err) => console.warn("[Auth] first sign-in notice failed:", err)),
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
+      }
 
       const session = await signToken(reset.userId);
       res.cookie(COOKIE_NAME, session, cookieOptions(COOKIE_MAX_AGE));
