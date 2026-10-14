@@ -33,6 +33,7 @@ on:
           - procedures
           - gapfill
           - paymenttrace
+          - recordpayment
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
@@ -40,7 +41,7 @@ on:
         required: false
         default: false
       args:
-        description: "Extra arguments (paymenttrace only, e.g. --amount=7500 --amount=1600)"
+        description: "Extra arguments (paymenttrace / recordpayment, e.g. --email=x@y.com --pass=5-pass)"
         type: string
         required: false
         default: ""
@@ -235,6 +236,25 @@ jobs:
         env:
           ARGS: ${{ inputs.args }}
         run: pnpm exec tsx scripts/paymentTrace.ts $ARGS
+
+      # Records a payment that reached the bank and never reached here, and
+      # credits the sessions. Reports unless `apply` is ticked, and refuses to
+      # record the same amount for the same member twice.
+      - name: Record a payment taken outside the platform
+        if: inputs.audit == 'recordpayment'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass arguments, e.g. --email=someone@example.com --pass=5-pass --method=square"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/recordPayment.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/recordPayment.ts $ARGS
+          fi
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
