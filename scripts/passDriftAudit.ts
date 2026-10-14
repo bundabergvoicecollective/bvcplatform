@@ -1,12 +1,13 @@
 /**
  * Read-only: has any attendance mark failed to move the pass it should have?
  *
- * Marking someone present through the admin UI does two writes — the
- * attendance row, then the deduction — and they are not in one transaction
- * (routers.ts, attendance.mark). If the second fails, the member is recorded
- * as present and keeps the session, and nothing says so. Rows written straight
- * into the database drift the same way: the 6 October import did exactly that,
- * deliberately, because the balances came from Manus already deducted.
+ * Marking someone present through the admin UI does two writes: the attendance
+ * row and the deduction. They are now one transaction (db.ts, applyAttendance),
+ * so neither can land without the other — but that only closes the gap from
+ * here on. Rows written straight into the database still drift, as the
+ * 6 October import did deliberately, because the balances came from Manus
+ * already deducted. Anything written before 14 October went through the old
+ * two-write path. This is how we find out whether that ever bit.
  *
  * Every successful deduction writes a user_activity_log row carrying
  * balanceBefore and balanceAfter. So an attendance row that claims a pass was

@@ -493,6 +493,140 @@ export async function upsertAttendance(
 }
 
 /**
+ * The attendance row and the pass movement, written together or not at all.
+ *
+ * These used to be two separate awaits in routers.ts: the row first, then the
+ * balance. Anything failing between them — a dropped connection is the
+ * realistic one — left the member recorded as present with the session still
+ * in hand, and nothing anywhere said so. scripts/passDriftAudit.ts exists to
+ * find that state; this exists so it cannot be created.
+ *
+ * The pass row is read FOR UPDATE. Two admins marking the same member at the
+ * same moment would otherwise both read the same balance and both write it
+ * minus one, costing the member a session that no attendance row accounts for.
+ *
+ * Notifications, emails and the activity log stay OUTSIDE this, deliberately:
+ * a transaction holds a pooled connection, and an email provider having a slow
+ * afternoon must not hold a database lock on somebody's pass.
+ *
+ * A restore falls back to the most recently assigned pass when no pass is
+ * active, because deducting the last session sets active = false. Without the
+ * fallback, un-marking a member whose pass had just hit zero restored nothing
+ * and they were simply out a session.
+ *
+ * `passUsed` and `sessionType` are what the caller INTENDS. If the locked read
+ * shows the pass is already empty — the other admin in that race got there
+ * first — the row is written as a single session rather than as a pass it
+ * could not actually take. `deducted` says which happened, so the caller logs
+ * the truth.
+ */
+export async function applyAttendance(input: {
+  sessionId: number;
+  userId: number;
+  attended: boolean;
+  passUsed: boolean;
+  sessionType: "pass" | "single" | "complimentary" | "online";
+  passChange: "deduct" | "restore" | "none";
+}): Promise<{
+  record: typeof attendance.$inferSelect | undefined;
+  balanceBefore: number | null;
+  balanceAfter: number | null;
+  deducted: boolean;
+}> {
+  if (!db) throw new Error("DB unavailable");
+
+  return db.transaction(async (tx) => {
+    let balanceBefore: number | null = null;
+    let balanceAfter: number | null = null;
+    let deducted = false;
+
+    if (input.passChange !== "none") {
+      const active = await tx
+        .select()
+        .from(passes)
+        .where(and(eq(passes.userId, input.userId), eq(passes.active, true)))
+        .orderBy(desc(passes.assignedAt))
+        .limit(1)
+        .for("update");
+
+      let pass = active[0] ?? null;
+      if (!pass && input.passChange === "restore") {
+        const latest = await tx
+          .select()
+          .from(passes)
+          .where(eq(passes.userId, input.userId))
+          .orderBy(desc(passes.assignedAt))
+          .limit(1)
+          .for("update");
+        pass = latest[0] ?? null;
+      }
+
+      if (pass) {
+        balanceBefore = pass.remainingSessions;
+        if (input.passChange === "deduct" && pass.remainingSessions > 0) {
+          balanceAfter = pass.remainingSessions - 1;
+          await tx
+            .update(passes)
+            .set({ remainingSessions: balanceAfter, active: balanceAfter > 0 })
+            .where(eq(passes.id, pass.id));
+          deducted = true;
+        } else if (input.passChange === "restore") {
+          balanceAfter = Math.min(pass.remainingSessions + 1, pass.totalSessions);
+          await tx
+            .update(passes)
+            .set({ remainingSessions: balanceAfter, active: true })
+            .where(eq(passes.id, pass.id));
+        } else {
+          balanceAfter = pass.remainingSessions;
+        }
+      }
+    }
+
+    // A pass the caller meant to take but could not is recorded as what it
+    // really was, so the row never claims a deduction that did not happen.
+    const lostTheRace = input.passChange === "deduct" && !deducted;
+    const passUsed = input.passUsed && !lostTheRace;
+    const sessionType =
+      lostTheRace && input.sessionType === "pass" ? "single" : input.sessionType;
+
+    const existing = await tx
+      .select()
+      .from(attendance)
+      .where(and(eq(attendance.sessionId, input.sessionId), eq(attendance.userId, input.userId)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await tx
+        .update(attendance)
+        .set({
+          attended: input.attended,
+          passUsed,
+          sessionType,
+          markedAt: new Date(),
+        })
+        .where(and(eq(attendance.sessionId, input.sessionId), eq(attendance.userId, input.userId)));
+    } else {
+      await tx.insert(attendance).values({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        attended: input.attended,
+        passUsed,
+        sessionType,
+        markedAt: new Date(),
+      });
+    }
+
+    const after = await tx
+      .select()
+      .from(attendance)
+      .where(and(eq(attendance.sessionId, input.sessionId), eq(attendance.userId, input.userId)))
+      .limit(1);
+
+    return { record: after[0], balanceBefore, balanceAfter, deducted };
+  });
+}
+
+/**
  * Adds a member who has actually joined a live rehearsal to the same-date
  * weekly attendance register. The relevant pass or single-session payment
  * has already unlocked access, so this action never deducts a second session.
