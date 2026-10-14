@@ -30,6 +30,7 @@ on:
           - memberdiff
           - coverage
           - income
+          - procedures
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
@@ -194,6 +195,14 @@ jobs:
       - name: Check what income is recorded
         if: inputs.audit == 'income'
         run: pnpm exec tsx scripts/incomeCheck.ts
+
+      # Reads Manus's public JavaScript to find out what its API is really
+      # called. No cookie needed — the bundle is served to anyone.
+      - name: Find out what Manus's procedures are called
+        if: inputs.audit == 'procedures'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+        run: pnpm exec tsx scripts/manusProcedures.ts
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
