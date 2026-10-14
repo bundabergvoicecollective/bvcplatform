@@ -94,6 +94,12 @@ async function main() {
   // up square — counting only the deduction reports a lost session that was
   // handed straight back, which is a false alarm about the one thing people
   // would most want to trust.
+  //
+  // Both action names, deliberately: a deduction logs as attendance_marked and
+  // a restore as attendance_unmarked (routers.ts). Summing only the first is
+  // the same false alarm in a different shape, which this audit raised once
+  // already before the second name was noticed. balanceBefore - balanceAfter
+  // is negative for a restore, so the two cancel.
   const net = await query<{ userId: number; day: string; taken: number; marks: number }[]>(
     `SELECT l.userId AS userId,
             DATE_FORMAT(DATE_ADD(l.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d') AS day,
@@ -104,7 +110,7 @@ async function main() {
                     = DATE_FORMAT(DATE_ADD(l.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d')
             ) AS marks
        FROM user_activity_log l
-      WHERE l.action = 'attendance_marked'
+      WHERE l.action IN ('attendance_marked', 'attendance_unmarked')
         AND l.balanceBefore IS NOT NULL AND l.balanceAfter IS NOT NULL
         AND l.createdAt >= ?
       GROUP BY l.userId, day
