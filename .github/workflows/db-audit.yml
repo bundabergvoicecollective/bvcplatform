@@ -30,6 +30,8 @@ on:
           - memberdiff
           - coverage
           - income
+          - procedures
+          - gapfill
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
@@ -194,6 +196,31 @@ jobs:
       - name: Check what income is recorded
         if: inputs.audit == 'income'
         run: pnpm exec tsx scripts/incomeCheck.ts
+
+      # Reads Manus's public JavaScript to find out what its API is really
+      # called. No cookie needed — the bundle is served to anyone.
+      - name: Find out what Manus's procedures are called
+        if: inputs.audit == 'procedures'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+        run: pnpm exec tsx scripts/manusProcedures.ts
+
+      # The two gaps the coverage check found: RSVPs that never came across
+      # with their performances, and a live stream Manus has and we do not.
+      # Reports unless `apply` is ticked. Members are matched by email, never
+      # by Manus's user ids.
+      - name: Fill the gaps the coverage check found
+        if: inputs.audit == 'gapfill'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/manusGapFill.ts --apply
+          else
+            pnpm exec tsx scripts/manusGapFill.ts
+          fi
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
