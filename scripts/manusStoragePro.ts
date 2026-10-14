@@ -85,56 +85,72 @@ async function main() {
       continue;
     }
 
+    const stored = rows[0].u ?? "";
+    // Two candidate URLs for the same file:
+    //   rebuilt  the key from the database, re-encoded a path segment at a
+    //            time — what mediaBackfill has been asking for
+    //   asStored the fileUrl column verbatim, which is the exact string the
+    //            Manus UI puts in its own links
+    // They are the same string for a key like avatars/9f3c21.jpg and NOT the
+    // same for "library/Angels We Have Heard On High - Bass.mp3", which is
+    // the shape the refusals all have.
+    const rebuilt = `${HOST}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+    const asStored = `${HOST}${stored.startsWith("/") ? stored : `/${stored}`}`;
+
     console.log(`${label}  key starts "${key.split("/")[0]}/"`);
+    console.log(`   the two URLs are ${rebuilt === asStored ? "IDENTICAL" : "DIFFERENT"}`);
 
-    const url = `${HOST}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+    for (const [which, url] of [["rebuilt ", rebuilt], ["asStored", asStored]] as const) {
+      if (which === "asStored" && rebuilt === asStored) continue;
+      try {
+        // Ask Manus but do not follow: the Location it hands back is the
+        // whole question, and a signed URL carries its signature in the query.
+        const first = await fetch(url, {
+          method: "GET",
+          redirect: "manual",
+          headers: COOKIE ? { cookie: COOKIE } : {},
+          signal: AbortSignal.timeout(30_000),
+        });
+        const location = first.headers.get("location");
+        console.log(
+          `   ${which} manus → ${first.status}` +
+            (location ? `, redirects to ${describe(location)}` : ", no redirect"),
+        );
+        if (!location) {
+          console.log(`            content-type ${first.headers.get("content-type") ?? "none"}`);
+          continue;
+        }
 
-    // Step one: ask Manus, but do not follow. The Location it gives is the
-    // whole question — a signed URL carries its signature in the query.
-    try {
-      const first = await fetch(url, {
-        method: "GET",
-        redirect: "manual",
-        headers: COOKIE ? { cookie: COOKIE } : {},
-        signal: AbortSignal.timeout(30_000),
-      });
-      const location = first.headers.get("location");
-      console.log(`   manus  → ${first.status}${location ? `, redirects to ${describe(location)}` : ", no redirect"}`);
-
-      if (!location) {
-        console.log(`          content-type ${first.headers.get("content-type") ?? "none"}`);
-        continue;
+        // The CDN, with no Manus cookie — a browser would not send one to a
+        // different host either.
+        const second = await fetch(location, {
+          method: "GET",
+          redirect: "follow",
+          signal: AbortSignal.timeout(60_000),
+        });
+        const len = second.headers.get("content-length");
+        console.log(
+          `   ${which} cdn   → ${second.status} ${second.headers.get("content-type") ?? "no type"}` +
+            (len ? `, ${len} bytes` : ""),
+        );
+        if (!second.ok) {
+          const body = (await second.text()).replace(/\s+/g, " ").trim().slice(0, 120);
+          console.log(`            ${body}`);
+        }
+      } catch (err) {
+        console.log(`   ${which} failed: ${(err as Error).message.slice(0, 80)}`);
       }
-
-      // Step two: the CDN, with no Manus cookie — it would never receive one
-      // from a browser either, the host does not match.
-      const second = await fetch(location, {
-        method: "GET",
-        redirect: "follow",
-        signal: AbortSignal.timeout(60_000),
-      });
-      const len = second.headers.get("content-length");
-      console.log(
-        `   cdn    → ${second.status} ${second.headers.get("content-type") ?? "no type"}` +
-          (len ? `, ${len} bytes` : ""),
-      );
-      if (!second.ok) {
-        const body = (await second.text()).replace(/\s+/g, " ").trim().slice(0, 140);
-        console.log(`          ${body}`);
-      }
-    } catch (err) {
-      console.log(`   failed: ${(err as Error).message.slice(0, 80)}`);
     }
     console.log("");
   }
 
   console.log(
     "Reading this:\n" +
-      "  A signed URL has Expires / Signature / Key-Pair-Id (or X-Amz-…) in its\n" +
-      "  query. If the refused ones get a BARE url and the working ones do too,\n" +
-      "  the difference is the object, not the permission — and AccessDenied is\n" +
-      "  S3's way of saying the key is not there.\n" +
-      "  If the refused ones get no redirect at all, Manus itself is the gate.",
+      "  Download works in the Manus UI, so the files ARE there and the\n" +
+      "  signature IS valid. Then the only thing left that can differ is the\n" +
+      "  URL itself. If `asStored` succeeds where `rebuilt` gets 403, the key\n" +
+      "  was being re-encoded into a key that does not exist, and S3 said\n" +
+      "  AccessDenied because it cannot admit to a missing object.",
   );
 
   await conn.end();
