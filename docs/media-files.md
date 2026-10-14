@@ -121,10 +121,75 @@ copied everything it could.
 
 ## Where it stands
 
-14 October 2026: the 24 files Manus serves openly — 19 avatars, 3 performance
-images, 2 documents — are in the bucket, and the member photos load. The 102
-library and gallery files are still only on Manus, waiting on the cookie, as
-are the 27 library rows that were never imported at all.
+**Done, 14 October 2026.** Verified by asking the bucket, not by trusting the
+copier:
+
+| | in the bucket |
+| --- | --- |
+| member avatars | 20 of 20 |
+| library items | 110 of 110 |
+| gallery posts | 12 of 12 |
+| gallery media | 7 of 7 |
+| performances (images) | 4 of 4 |
+| documents | 2 of 2 |
+
+Plus 29 rows that had never been imported: 27 library items, the Carols
+performance and its announcement.
+
+### The wrong turn, which is the useful part
+
+Avatars, performance images and documents copied on the first attempt.
+Library and gallery answered `403 AccessDenied` from CloudFront, and I read
+that as Manus protecting member-only material — so the hunt went to session
+cookies, then to CloudFront signed cookies, and finally to "the files must be
+gone", which would have meant telling the choir its music was lost. One click
+on **Download** in the Manus UI disproved that in a second.
+
+The actual cause was in our own code. The backfill rebuilt each fetch URL from
+the `fileKey` column, re-encoding every path segment:
+
+```
+key.split("/").map(encodeURIComponent).join("/")
+```
+
+A no-op for `avatars/9f3c21.jpg`. Not a no-op for
+`library/Angels We Have Heard On High - Bass.mp3`. It asked for a key that
+does not exist — and **S3 answers a missing key with `AccessDenied`, not
+`404`, when the caller cannot list the bucket.** Identical response, opposite
+meaning. Same file, same signed URL mechanism, two URLs:
+
+```
+rebuilt  → 403 AccessDenied
+asStored → 200 audio/mpeg, 6,728,773 bytes
+```
+
+Both scripts now fetch the row's own `fileUrl`, which is what the app itself
+links to. Worth remembering: `AccessDenied` from S3 means *the key or the
+permission*, and nothing in the response says which.
+
+### Two more quiet-failure traps, both fixed
+
+- An expired `MANUS_COOKIE` made every content read fail the same way and the
+  job exit 0 — nothing imported, green tick. A login page comes back as **200
+  HTML**, which died in the JSON parse and reported as "that procedure does
+  not exist", sending you after a renamed endpoint instead of a dead cookie.
+  Now an `::error::` and exit 1.
+- The backfill read one table, copied its files, read the next. Copying 110
+  library files took twenty minutes, TiDB dropped the idle connection, and the
+  four tables after the library failed with "connection is in closed state" —
+  under a tidy "110 copied" summary and a green tick. Every table is now read
+  before anything is fetched, and an unreadable table exits 1.
+
+All three are the `drizzle-kit push` failure in different clothes: a step that
+reports success and does nothing. Worth assuming it is the default shape of a
+bug here rather than a coincidence.
+
+### Now delete the secret
+
+`MANUS_COOKIE` is a live admin session for the old site, sitting in a public
+repository's secret store where every workflow run and anyone with write
+access can read it. The migration is done. **Delete it**, and sign out of
+Manus once to invalidate it.
 
 ## The deadline that matters
 
