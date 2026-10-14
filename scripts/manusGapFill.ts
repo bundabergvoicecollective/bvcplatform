@@ -8,14 +8,21 @@
  *
  * ── matching people ──
  *
- * By EMAIL, lower(trim(...)) on both sides, the same way the app looks members
- * up and the same way importManusDelta.ts does it. NOT by Manus's user id:
- * nothing guarantees their ids and ours are the same numbers, and an RSVP
- * attached to the wrong member is worse than a missing one — it tells somebody
+ * events.rsvpList gives firstName, lastName, name, status and userId — and no
+ * address. Matching on their userId directly would mean trusting that Manus's
+ * member ids and ours are the same numbers, which nothing guarantees; an RSVP
+ * on the wrong member is worse than a missing one, because it tells somebody
  * they are singing at a concert they never agreed to.
  *
- * If a row cannot be matched to a member here, it is reported and skipped. No
- * guessing by name.
+ * So the bridge is built inside Manus first: members.listAll gives its own id
+ * alongside the address it holds, and the address is matched to ours with
+ * lower(trim(...)) on both sides — the way the app looks members up and the
+ * way importManusDelta.ts does it. Their id identifies the person only within
+ * their system; the address is what crosses.
+ *
+ * A row that cannot be carried across that bridge is reported and skipped. No
+ * guessing by name — two members can share one, and the whole point of not
+ * trusting ids is not to invent an answer.
  *
  * Events are matched by title and date, not by id, for the same reason.
  *
@@ -107,6 +114,33 @@ async function main() {
   const members = await q<{ id: number; email: string | null }[]>("SELECT id, email FROM users");
   const byEmail = new Map(members.filter((m) => m.email).map((m) => [key(m.email), m.id]));
 
+  // Manus's member id → the address it has for them. listAll rather than list,
+  // so pending and denied rows are in it too; somebody can have RSVP'd before
+  // their membership was tidied up.
+  const theirMembers = asList(await call("members.listAll")) ?? asList(await call("members.list")) ?? [];
+  const manusIdToOurs = new Map<number, number>();
+  let theirsWithoutEmail = 0;
+  for (const m of theirMembers) {
+    const id = Number(pickAny(m, "id", "userId"));
+    const email = key(pickAny(m, "email", "emailAddress"));
+    if (!Number.isFinite(id)) continue;
+    if (!email) {
+      theirsWithoutEmail++;
+      continue;
+    }
+    const ours = byEmail.get(email);
+    if (ours) manusIdToOurs.set(id, ours);
+  }
+  console.log(
+    `Bridged ${manusIdToOurs.size} of Manus's ${theirMembers.length} members to ours by address` +
+      (theirsWithoutEmail ? `; ${theirsWithoutEmail} of theirs have no address` : "") + ".",
+  );
+  if (!manusIdToOurs.size) {
+    console.log(`  members.listAll fields: ${theirMembers[0] ? Object.keys(theirMembers[0]).sort().join(", ") : "(no rows)"}`);
+    throw new Error("No member could be bridged — RSVPs cannot be placed without it.");
+  }
+  console.log("");
+
   // ── 1. The missing live stream ────────────────────────────────────────────
   console.log("Live streams");
   const theirStreams = asList(await call("liveStreams.list")) ?? [];
@@ -186,14 +220,17 @@ async function main() {
         console.log(`  fields Manus returns: ${Object.keys(r).sort().join(", ")}`);
         fieldsShown = true;
       }
+      // An address if the row happens to carry one; otherwise Manus's own id
+      // translated through the bridge built above.
       const email = key(pickAny(r, "email", "userEmail", "memberEmail"));
-      if (!email) {
-        unmatched.push(`${ev.title}: a row with no address to match on`);
-        continue;
-      }
-      const userId = byEmail.get(email);
+      const theirUserId = Number(pickAny(r, "userId", "memberId", "id"));
+      const userId = email ? byEmail.get(email) : manusIdToOurs.get(theirUserId);
       if (!userId) {
-        unmatched.push(`${ev.title}: ${shown(email)} is not a member here`);
+        unmatched.push(
+          email
+            ? `${ev.title}: ${shown(email)} is not a member here`
+            : `${ev.title}: their member #${theirUserId} has no address we can match`,
+        );
         continue;
       }
       if (have.has(userId)) continue;
