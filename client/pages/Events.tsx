@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { RichText } from "@/components/RichText";
 import {
   Select,
   SelectContent,
@@ -450,7 +451,11 @@ export default function Events() {
                 <Badge className={`text-xs border-0 ${catColors[event.category] ?? ""}`}>{event.category}</Badge>
               </div>
               {event.description && (
-                <p className="text-sm mb-2" style={{ color: "oklch(0.52 0.03 240)" }}>{event.description}</p>
+                <RichText
+                  html={event.description}
+                  className="text-sm mb-2"
+                  style={{ color: "oklch(0.52 0.03 240)" }}
+                />
               )}
               <div className="flex flex-wrap gap-3 text-xs" style={{ color: "oklch(0.55 0.03 240)" }}>
                 <span className="flex items-center gap-1">
@@ -569,7 +574,7 @@ export default function Events() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) { setEditingEvent(null); setForm(emptyForm); } }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ color: NAVY }}>{editingEvent ? "Edit Performance" : "Create New Performance"}</DialogTitle>
           </DialogHeader>
@@ -633,11 +638,11 @@ export default function Events() {
             </div>
             <div className="space-y-1.5">
               <Label>Description</Label>
-              <Textarea
-                placeholder="Add details about the event..."
-                rows={3}
+              <RichTextEditor
                 value={form.description}
-                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                onChange={(html) => setForm(f => ({ ...f, description: html }))}
+                recordKey={editingEvent?.id ?? "new"}
+                placeholder="What is the performance, where, who is eligible, what to wear…"
               />
             </div>
             {/* Image upload */}

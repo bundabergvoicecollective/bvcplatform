@@ -27,6 +27,9 @@ on:
           - mediabackfill
           - manuscontent
           - storageprobe
+          - memberdiff
+          - coverage
+          - income
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
@@ -167,6 +170,30 @@ jobs:
           MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
           MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
         run: pnpm exec tsx scripts/manusStoragePro.ts
+
+      # Who does Manus have that we do not? Read-only, writes nothing.
+      # Addresses masked and names cut to initials — the log is public.
+      - name: Compare the member lists
+        if: inputs.audit == 'memberdiff'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+        run: pnpm exec tsx scripts/memberDiff.ts
+
+      # Table by table: what does Manus hold, and what do we? Read-only.
+      # Counts only — the repository is public.
+      - name: Compare Manus against us, table by table
+        if: inputs.audit == 'coverage'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+        run: pnpm exec tsx scripts/manusCoverage.ts
+
+      # Why does the dashboard say $0.00 cash? Read-only, amounts and dates
+      # only.
+      - name: Check what income is recorded
+        if: inputs.audit == 'income'
+        run: pnpm exec tsx scripts/incomeCheck.ts
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'

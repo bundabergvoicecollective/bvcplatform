@@ -1930,6 +1930,43 @@ export async function createManualMember(data: {
 
 // ─── Admin: Record Cash Payment ───────────────────────────────────────────────
 
+/**
+ * The rehearsal that money recorded on a given day belongs to.
+ *
+ * Rehearsals are weekly, on a Tuesday. Cash and EFTPOS are taken on the night
+ * and entered afterwards — "that money should always land Tuesday or
+ * Wednesday" — so the rehearsal it belongs to is the most recent one on or
+ * before the day it was entered, and never one from a previous week.
+ *
+ * Days are Brisbane days. The database keeps timestamps in UTC and Brisbane is
+ * UTC+10, so anything entered before 10am local is on the previous UTC day;
+ * comparing raw dates would push a Wednesday-morning entry back onto the
+ * Tuesday by accident and a Tuesday-morning one onto the Monday, which is
+ * wrong for a different reason. INTERVAL 10 HOUR moves both sides into
+ * Brisbane before the comparison, the same way getWeeklyIncome does it.
+ */
+export async function getSessionForPaymentOn(when: Date) {
+  if (!db) return null;
+  const rows = await db
+    .select({ id: sessions.id, title: sessions.title, sessionDate: sessions.sessionDate })
+    .from(sessions)
+    .where(
+      sql`DATE(DATE_ADD(${sessions.sessionDate}, INTERVAL 10 HOUR))
+            <= DATE(DATE_ADD(${when}, INTERVAL 10 HOUR))`,
+    )
+    .orderBy(desc(sessions.sessionDate))
+    .limit(1);
+  const found = rows[0];
+  if (!found) return null;
+
+  // Never reach back past the previous rehearsal: a week-old session means
+  // nobody recorded that night's takings, and quietly adding this week's money
+  // to it would be worse than leaving it unattached.
+  const daysBetween =
+    (new Date(when).getTime() - new Date(found.sessionDate).getTime()) / 86_400_000;
+  return daysBetween <= 6.5 ? found : null;
+}
+
 export async function recordCashPayment(data: {
   userId: number;
   passType: string;
@@ -1938,8 +1975,15 @@ export async function recordCashPayment(data: {
   adminId: number;
   notes?: string;
   paymentMethod?: "cash" | "complimentary";
+  /** The rehearsal the money was taken at. Defaults to the one it belongs to. */
+  sessionId?: number;
 }) {
   if (!db) throw new Error("DB unavailable");
+
+  // Money is counted at a rehearsal and typed in afterwards, often the next
+  // morning. Record which rehearsal it belongs to rather than leaving it to be
+  // inferred from the day somebody happened to open the laptop.
+  const sessionId = data.sessionId ?? (await getSessionForPaymentOn(new Date()))?.id ?? null;
 
   // 1. Create a pass order record (no Stripe session)
   await db.insert(passOrders).values({
@@ -1950,6 +1994,7 @@ export async function recordCashPayment(data: {
     amountCents: data.amountCents,
     currency: "aud",
     paymentMethod: data.paymentMethod ?? "cash",
+    sessionId,
     notes: data.notes ?? null,
     status: "paid",
   });
@@ -2602,7 +2647,38 @@ export async function getLastSessionIncome() {
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionDateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-  // Fetch cash/EFTPOS/complimentary orders recorded in our DB for this session date
+  // The NEXT rehearsal, if one has been created. Money belongs to the
+  // rehearsal it was taken at and is entered on the night or the days after,
+  // so the window runs forward from this session up to the next one — not
+  // backwards from it.
+  const next = await db
+    .select({ sessionDate: sessions.sessionDate })
+    .from(sessions)
+    .where(sql`${sessions.sessionDate} > ${sess.sessionDate}`)
+    .orderBy(sessions.sessionDate)
+    .limit(1);
+
+  // Cash and EFTPOS taken at a rehearsal get typed in afterwards, usually the
+  // next morning — "that money should always land Tuesday or Wednesday". The
+  // old query matched DATE(createdAt) against the session date exactly, so a
+  // Wednesday entry belonged to nothing and showed as $0.00 against the night
+  // it was actually taken.
+  //
+  // Rows written from 14 October 2026 carry sessionId and need no guessing.
+  // Everything older is matched by date instead: on the rehearsal day or
+  // after it, and before the next rehearsal. Brisbane days on both sides — the
+  // database keeps UTC and Brisbane is UTC+10, so a 7am Wednesday entry is
+  // still Tuesday in UTC and a raw comparison puts it on the wrong day.
+  const bris = (col: unknown) => sql`DATE(DATE_ADD(${col}, INTERVAL 10 HOUR))`;
+  const belongsHere = next.length
+    ? sql`(${passOrders.sessionId} = ${sess.id}
+            OR (${passOrders.sessionId} IS NULL
+                AND ${bris(passOrders.createdAt)} >= ${bris(sess.sessionDate)}
+                AND ${bris(passOrders.createdAt)} < ${bris(next[0].sessionDate)}))`
+    : sql`(${passOrders.sessionId} = ${sess.id}
+            OR (${passOrders.sessionId} IS NULL
+                AND ${bris(passOrders.createdAt)} >= ${bris(sess.sessionDate)}))`;
+
   const allOrders = await db
     .select({
       id: passOrders.id,
@@ -2620,12 +2696,7 @@ export async function getLastSessionIncome() {
     })
     .from(passOrders)
     .leftJoin(users, eq(passOrders.userId, users.id))
-    .where(
-      and(
-        eq(passOrders.status, "paid"),
-        sql`DATE(${passOrders.createdAt}) = ${sessionDateStr}`
-      )
-    )
+    .where(and(eq(passOrders.status, "paid"), belongsHere))
     .orderBy(desc(passOrders.createdAt));
 
   // Split into cash/EFTPOS and complimentary (Square payments come from Square API directly)
