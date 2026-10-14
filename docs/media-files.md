@@ -184,6 +184,52 @@ All three are the `drizzle-kit push` failure in different clothes: a step that
 reports success and does nothing. Worth assuming it is the default shape of a
 bug here rather than a coincidence.
 
+## The rows, finished
+
+14 October 2026. Everything Manus holds is now here, verified by comparing
+every table rather than by trusting any single import:
+
+| | |
+| --- | --- |
+| library items | 110 / 110 |
+| events, gallery posts, documents, sessions, groups, shop products | level |
+| live streams | 15 / 15 — "BVC Rehearsal - October 6" was the one missing |
+| event RSVPs | Carols 4 → 30, Moncrieff 31 → 37 |
+| gallery comments | 3 / 3 |
+| attendance | 526 here, 452 there — we have **more**, which is right: Tuesday's 39 marks happened on this site |
+
+### Two things that look like gaps and are not
+
+**Members: 76 here, 73 from `members.list`.** That procedure returns the
+approved roll; `members.listAll` includes pending and denied, which our users
+table holds. There was never a missing member.
+
+**Moncrieff: 37 here, 38 there.** Two of Manus's RSVP rows resolve to the same
+member on our side — a duplicate in theirs, not a loss in ours.
+
+### What the audits taught, which is the part worth keeping
+
+**An id from another system is not an identity.** `scripts/manusCoverage.ts`
+compared RSVPs by asking Manus about *our* event ids, which happened to line
+up for everything imported in September and did not for the Carols row created
+here on the 13th. It reported Carols as having 0 RSVPs in Manus when it had 28.
+Match on what a thing *is* — a title and a date, an address — not on a number
+another system assigned it. `scripts/manusGapFill.ts` does, which is why it got
+the right answer.
+
+**`events.rsvpList` carries no address**, only Manus's own `userId`. Attaching
+those by raw id would mean assuming their member numbers equal ours; an RSVP on
+the wrong member tells somebody they are singing at a concert they never agreed
+to. The bridge goes `their id → their address → our member`, built from
+`members.listAll`. Their id identifies the person inside their system; the
+address is the thing that crosses between systems.
+
+**Guessing procedure names has a floor.** Six tables read `?` until
+`scripts/manusProcedures.ts` pulled the real names out of Manus's public
+JavaScript bundle — a tRPC client builds its path from property access, and
+minifiers leave property names alone, so `events.rsvpList` and
+`payments.allOrders` are sitting there in the file.
+
 ### Now delete the secret
 
 `MANUS_COOKIE` is a live admin session for the old site, sitting in a public
