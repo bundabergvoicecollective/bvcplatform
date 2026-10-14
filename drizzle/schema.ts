@@ -163,6 +163,14 @@ export const passOrders = mysqlTable("pass_orders", {
   status: mysqlEnum("status", ["pending", "paid", "failed", "cancelled"]).default("pending").notNull(),
   paymentMethod: mysqlEnum("paymentMethod", ["stripe", "square", "cash", "complimentary"]).default("square").notNull(),
   passId: int("passId"),
+  // Which rehearsal this money was taken at. Cash and EFTPOS are collected at
+  // a rehearsal and typed in afterwards — sometimes the next day — and without
+  // this the only way to connect the two was the calendar day the row was
+  // written, so anything entered on the Wednesday belonged to nothing. Null on
+  // every row written before 14 October 2026 and on Square payments, which
+  // arrive on their own schedule; getLastSessionIncome falls back to a date
+  // window for those.
+  sessionId: int("sessionId"),
   notes: text("notes"),
   receiptSentAt: timestamp("receiptSentAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

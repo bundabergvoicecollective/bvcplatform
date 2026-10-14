@@ -218,6 +218,15 @@ function IncomeWidget() {
             <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "oklch(0.45 0.12 185)" }}>
               Record Cash / EFTPOS Payment
             </p>
+            {/* Say which night this is going against. It used to depend on the
+                calendar day you happened to type it in, which is not something
+                anyone should have to know. */}
+            {income?.sessionTitle && (
+              <p className="text-xs" style={{ color: "oklch(0.45 0.03 240)" }}>
+                Recording against <strong>{income.sessionTitle}</strong> — the money is
+                counted toward that rehearsal whichever day you enter it.
+              </p>
+            )}
             <div className="space-y-2">
               <Label className="text-xs" style={{ color: "oklch(0.35 0.04 240)" }}>Member</Label>
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
@@ -267,6 +276,10 @@ function IncomeWidget() {
                   userId: Number(selectedUserId),
                   passType: passType as "10-pass" | "5-pass" | "single",
                   notes: notes || undefined,
+                  // The rehearsal this tile is showing. Money counted on the
+                  // night and typed in the next morning belongs to the night,
+                  // not to the day somebody got round to entering it.
+                  sessionId: income?.sessionId,
                 })
               }
               style={{ background: "oklch(0.55 0.14 185)", color: "white" }}

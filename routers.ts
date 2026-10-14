@@ -342,6 +342,9 @@ const coreRouter = router({
           passType: z.enum(["10-pass", "5-pass", "single", "10-pass-comp", "5-pass-comp", "single-comp", "custom-carryover"]),
           customSessionCount: z.number().int().min(0).max(100).optional(),
           notes: z.string().optional(),
+          // Which rehearsal the money was taken at. The form sends the one it
+          // is showing; left out, recordCashPayment works it out from today.
+          sessionId: z.number().optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -358,6 +361,7 @@ const coreRouter = router({
           adminId: ctx.user.id,
           notes: input.notes,
           paymentMethod: isComp ? "complimentary" : "cash",
+          sessionId: input.sessionId,
         });
 
         // ── Notifications for complimentary / free session grants ──────────
