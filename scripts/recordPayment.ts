@@ -22,12 +22,20 @@
  *
  * Reports by default. Writes only with --apply.
  *
+ * ── it has to exit on purpose ──
+ *
+ * This is the first script here to import db.ts, and db.ts opens a connection
+ * POOL at module load. A pool keeps idle sockets open, so the process does not
+ * end when main() resolves — the first apply run sat in Actions for twenty
+ * minutes after finishing its work, looking exactly like a hang. Every path
+ * out of main() therefore exits explicitly.
+ *
  * Usage:
  *   DATABASE_URL=... tsx scripts/recordPayment.ts \
  *     --email=someone@example.com --pass=5-pass --method=square [--apply]
  */
 import mysql from "mysql2/promise";
-import { recordCashPayment } from "../db";
+import { logActivity, recordCashPayment } from "../db";
 import { PASS_PRODUCTS } from "../products";
 
 const args = process.argv.slice(2);
@@ -115,10 +123,12 @@ async function main() {
       `\nWould add ${product.sessionCount} session(s) and record a paid ${METHOD} order for ${money(product.amountCents)}.`,
     );
     await conn.end();
-    return;
+    process.exit(0);
   }
 
   await conn.end();
+
+  const balanceBefore = before.length ? before[0].remaining : 0;
 
   await recordCashPayment({
     userId: member.id,
@@ -130,6 +140,20 @@ async function main() {
     notes: NOTE ?? `Recorded by hand: ${METHOD} payment taken outside the platform.`,
   });
 
+  // The tRPC procedure writes this; calling the database function straight
+  // does not. Without it the Members page shows a balance that grew by five
+  // with nothing saying why, which is the question somebody will ask.
+  await logActivity({
+    userId: member.id,
+    actorId: admin.id,
+    action: "pass_credited",
+    detail:
+      `${METHOD} payment of ${money(product.amountCents)} recorded by hand (${PASS}). ` +
+      `Balance: ${balanceBefore} → ${balanceBefore + product.sessionCount}.`,
+    balanceBefore,
+    balanceAfter: balanceBefore + product.sessionCount,
+  }).catch(() => {});
+
   const after = await mysql.createConnection(url).then(async (c) => {
     const rows = (await c.query(
       "SELECT remainingSessions AS remaining, totalSessions AS total FROM passes WHERE userId = ? AND active = 1 ORDER BY assignedAt DESC LIMIT 1",
@@ -139,6 +163,9 @@ async function main() {
     return rows[0];
   });
   console.log(`\nDone. Balance now ${after ? `${after.remaining} of ${after.total}` : "(no active pass — something is wrong)"}.`);
+
+  // db.ts's pool holds the process open. The work is finished; say so and go.
+  process.exit(0);
 }
 
 main().catch((err) => {
