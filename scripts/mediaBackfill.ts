@@ -122,28 +122,39 @@ async function main() {
   // One refusal described in full is worth 110 counted.
   let describedRefusal = false;
 
+  // EVERY table is read before ANY file is fetched, and the database is then
+  // closed. Copying 110 library files takes twenty minutes; the first run that
+  // did it table by table lost its TiDB connection partway through and every
+  // table after the library failed with "connection is in closed state" — and
+  // the job still exited 0 under a tidy "110 copied" summary. Four tables
+  // silently skipped behind a green tick is the drizzle-kit push shape again.
+  // The fix is not a longer timeout: it is not holding a connection open
+  // across work that does not need one.
+  const plan: { label: string; source: Map<string, string> }[] = [];
+  const unreadable: string[] = [];
   for (const [table, urlCol, keyCol, label] of MEDIA) {
     if (ONLY && ONLY !== table) continue;
-
-    let rows: { u: string | null; k: string | null }[];
     try {
-      rows = await query<{ u: string | null; k: string | null }[]>(
+      const rows = await query<{ u: string | null; k: string | null }[]>(
         `SELECT \`${urlCol}\` AS u, ${keyCol ? `\`${keyCol}\`` : "NULL"} AS k FROM \`${table}\`
           WHERE \`${urlCol}\` IS NOT NULL AND \`${urlCol}\` <> ''`,
       );
+      // key → where to fetch it from. The key is what we store under; the URL
+      // is the app's own link, which is the only one that resolves. See
+      // fetchPath above for why those are not the same string.
+      const source = new Map<string, string>();
+      for (const r of rows) {
+        const k = keyFromUrl(r.u, r.k);
+        if (k && !source.has(k)) source.set(k, fetchPath(r.u, k));
+      }
+      plan.push({ label, source });
     } catch (err) {
-      console.log(`${label}: could not read (${(err as Error).message.slice(0, 60)})`);
-      continue;
+      unreadable.push(`${label}: ${(err as Error).message.slice(0, 60)}`);
     }
+  }
+  await conn.end();
 
-    // key → where to fetch it from. The key is what we store under; the URL
-    // is the app's own link, which is the only one that resolves. See
-    // fetchPath above for why those are not the same string.
-    const source = new Map<string, string>();
-    for (const r of rows) {
-      const k = keyFromUrl(r.u, r.k);
-      if (k && !source.has(k)) source.set(k, fetchPath(r.u, k));
-    }
+  for (const { label, source } of plan) {
     const keys = [...source.keys()];
     if (!keys.length) {
       console.log(`${label}: nothing to do`);
@@ -290,7 +301,14 @@ async function main() {
     if (failures.length > 20) console.log(`  …and ${failures.length - 20} more`);
   }
 
-  await conn.end();
+  // A table we could not even read is never a quiet line in the middle of a
+  // green run. It means files nobody has accounted for.
+  if (unreadable.length) {
+    console.error(`\n::error::${unreadable.length} table(s) could not be read, so their files were never checked:`);
+    for (const u of unreadable) console.error(`  ${u}`);
+    process.exit(1);
+  }
+
   // A missing cookie is a thing to go and get, not a broken run. Only an
   // unexpected failure turns the job red.
   if (APPLY && totalFailed) process.exit(1);
