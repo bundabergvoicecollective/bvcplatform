@@ -22,6 +22,11 @@
  * Usage: MANUS_HOST=https://… tsx scripts/manusProcedures.ts
  */
 
+// This file has no imports, so without an export TypeScript treats it as a
+// script in the global scope — and its helpers then collide with identically
+// named ones in the other scripts here. cloudflareDns.ts also has a `get`.
+export {};
+
 const HOST = (process.env.MANUS_HOST ?? "").replace(/\/+$/, "");
 
 /** The React Query / vanilla client call sites that end a procedure path. */
@@ -41,7 +46,7 @@ const TERMINALS = [
   "prefetch",
 ];
 
-async function get(url: string): Promise<string> {
+async function fetchText(url: string): Promise<string> {
   const res = await fetch(url, { signal: AbortSignal.timeout(45_000), redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.text();
@@ -51,7 +56,7 @@ async function main() {
   if (!HOST) throw new Error("MANUS_HOST is not set.");
 
   console.log(`Reading ${HOST} …\n`);
-  const html = await get(HOST);
+  const html = await fetchText(HOST);
 
   // Every script the page loads, plus anything it modulepreloads.
   const srcs = new Set<string>();
@@ -74,7 +79,7 @@ async function main() {
     const url = src.startsWith("http") ? src : `${HOST}${src.startsWith("/") ? "" : "/"}${src}`;
     let js: string;
     try {
-      js = await get(url);
+      js = await fetchText(url);
     } catch (err) {
       console.log(`  could not read ${src.slice(-40)} — ${(err as Error).message}`);
       continue;
