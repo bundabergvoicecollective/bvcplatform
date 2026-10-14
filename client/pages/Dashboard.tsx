@@ -328,16 +328,16 @@ function IncomeWidget() {
 /**
  * Week-on-week income, admin only.
  *
- * The bar colour is the brand gold nudged from chroma 0.10 to 0.11. At 0.10 it
- * falls under the chroma floor and reads as grey on a white card; 0.11 is the
- * nearest step that passes, and the shift is imperceptible beside the rest of
- * the brand gold on this page.
+ * The bars are rose rather than the brand gold: gold at the lightness this
+ * needs reads brown on a white card, which is what prompted the change. This
+ * rose passes the lightness band, the chroma floor and 3:1 contrast against
+ * the card, checked with a validator rather than by eye.
  *
  * One series, so no legend — the card title names the measure. Pending money
  * is deliberately not drawn: it is not income, and a second series would
  * invite reading it as though it were.
  */
-const INCOME_BAR = "oklch(0.55 0.11 75)";
+const INCOME_BAR = "oklch(0.6 0.18 350)";
 const INK = "oklch(0.22 0.07 240)";
 const INK_MUTED = "oklch(0.52 0.03 240)";
 
