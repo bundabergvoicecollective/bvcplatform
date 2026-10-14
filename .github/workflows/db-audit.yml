@@ -25,9 +25,11 @@ on:
           - manus
           - media
           - mediabackfill
+          - manuscontent
+          - storageprobe
           - passdrift
       apply:
-        description: "Write the changes (manus and mediabackfill only — everything else ignores this)"
+        description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
         type: boolean
         required: false
         default: false
@@ -126,6 +128,45 @@ jobs:
           else
             pnpm exec tsx scripts/mediaBackfill.ts
           fi
+
+      # The other half of the migration. The 29 September import covered
+      # rehearsals, attendance, orders, passes and members; it never touched
+      # content, so the library, performances, announcements and documents
+      # all stop dead on that date. This brings the missing rows across and
+      # the files behind them in the same pass.
+      #
+      # Needs MANUS_COOKIE: Manus will not hand over content, or serve the
+      # library and gallery files, without a signed-in session.
+      - name: Bring the Manus content across
+        if: inputs.audit == 'manuscontent'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: bvc-storage
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$MANUS_COOKIE" ]; then
+            echo "::error::MANUS_COOKIE is not set. Sign in to the Manus admin, copy the Cookie header from any request in DevTools → Network, and save it as a repository secret."
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/manusContentSync.ts --apply
+          else
+            pnpm exec tsx scripts/manusContentSync.ts
+          fi
+
+      # Read-only, no writes anywhere. Tells a CloudFront signed-URL refusal
+      # apart from an object that was never there — S3 answers AccessDenied
+      # for both, and the two have completely different fixes.
+      - name: Probe how Manus serves its storage
+        if: inputs.audit == 'storageprobe'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+        run: pnpm exec tsx scripts/manusStoragePro.ts
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'

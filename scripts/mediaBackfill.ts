@@ -56,6 +56,26 @@ function keyFromUrl(url: string | null, storedKey: string | null): string | null
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/**
+ * Where to FETCH a file from on Manus — which is not the same thing as the
+ * key to store it under.
+ *
+ * The stored fileUrl is the exact string the Manus UI links to, already
+ * encoded however Manus encodes it. Rebuilding it from the key instead, a
+ * path segment at a time, is a no-op for `avatars/9f3c21.jpg` and is not a
+ * no-op for `library/Angels We Have Heard On High - Bass.mp3` — and a key
+ * that does not exist comes back from S3 as AccessDenied, not as a 404,
+ * because the caller cannot list the bucket. That read as a permission wall
+ * and cost a detour through cookies and CloudFront before a probe showed the
+ * same file returning 200 from the URL the app itself uses.
+ *
+ * So: the stored URL when there is one, and only otherwise the rebuilt key.
+ */
+function fetchPath(url: string | null, key: string): string {
+  if (url && url.startsWith("/")) return url;
+  return `/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 /** A key is a file path and this log is public, so only its shape is printed. */
 function shape(key: string): string {
   const slash = key.lastIndexOf("/");
@@ -99,22 +119,43 @@ async function main() {
   let totalNeedsAuth = 0;
   const failures: string[] = [];
   const needsAuthIn = new Set<string>();
+  // One refusal described in full is worth 110 counted.
+  let describedRefusal = false;
 
+  // EVERY table is read before ANY file is fetched, and the database is then
+  // closed. Copying 110 library files takes twenty minutes; the first run that
+  // did it table by table lost its TiDB connection partway through and every
+  // table after the library failed with "connection is in closed state" — and
+  // the job still exited 0 under a tidy "110 copied" summary. Four tables
+  // silently skipped behind a green tick is the drizzle-kit push shape again.
+  // The fix is not a longer timeout: it is not holding a connection open
+  // across work that does not need one.
+  const plan: { label: string; source: Map<string, string> }[] = [];
+  const unreadable: string[] = [];
   for (const [table, urlCol, keyCol, label] of MEDIA) {
     if (ONLY && ONLY !== table) continue;
-
-    let rows: { u: string | null; k: string | null }[];
     try {
-      rows = await query<{ u: string | null; k: string | null }[]>(
+      const rows = await query<{ u: string | null; k: string | null }[]>(
         `SELECT \`${urlCol}\` AS u, ${keyCol ? `\`${keyCol}\`` : "NULL"} AS k FROM \`${table}\`
           WHERE \`${urlCol}\` IS NOT NULL AND \`${urlCol}\` <> ''`,
       );
+      // key → where to fetch it from. The key is what we store under; the URL
+      // is the app's own link, which is the only one that resolves. See
+      // fetchPath above for why those are not the same string.
+      const source = new Map<string, string>();
+      for (const r of rows) {
+        const k = keyFromUrl(r.u, r.k);
+        if (k && !source.has(k)) source.set(k, fetchPath(r.u, k));
+      }
+      plan.push({ label, source });
     } catch (err) {
-      console.log(`${label}: could not read (${(err as Error).message.slice(0, 60)})`);
-      continue;
+      unreadable.push(`${label}: ${(err as Error).message.slice(0, 60)}`);
     }
+  }
+  await conn.end();
 
-    const keys = [...new Set(rows.map((r) => keyFromUrl(r.u, r.k)).filter((k): k is string => !!k))];
+  for (const { label, source } of plan) {
+    const keys = [...source.keys()];
     if (!keys.length) {
       console.log(`${label}: nothing to do`);
       continue;
@@ -147,9 +188,10 @@ async function main() {
     // at all, and whether it needs a session to do it, is the thing most
     // worth knowing before a run that writes 126 objects.
     const toDo = APPLY ? missing : missing.slice(0, 1);
+    describedRefusal = false; // describe the first refusal in each table
 
     for (const key of toDo) {
-      const url = `${host}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+      const url = `${host}${source.get(key)}`;
       try {
         const res = await fetch(url, {
           redirect: "follow",
@@ -158,11 +200,29 @@ async function main() {
           signal: AbortSignal.timeout(120_000),
         });
         if (res.status === 401 || res.status === 403) {
-          // Not a fault: Manus will not serve this without a session. Counted
-          // apart from real failures so a run that is only short of a cookie
-          // does not read as a broken one.
+          // Counted apart from real failures. With no cookie this just means
+          // Manus wants a session; WITH one it means something else, and the
+          // first such refusal is worth describing rather than guessing at —
+          // the status alone sent me down the wrong path once already.
           needsAuth++;
           needsAuthIn.add(label);
+          if (!describedRefusal) {
+            describedRefusal = true;
+            let hint = "";
+            try {
+              const text = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 160);
+              if (text) hint = `  body: ${text}`;
+            } catch {
+              /* nothing to add */
+            }
+            const landed = new URL(res.url);
+            console.log(
+              `  refused ${shape(key)} — HTTP ${res.status}` +
+                `, served by ${landed.host}${landed.pathname.slice(0, 40)}` +
+                `, redirected: ${res.redirected}` +
+                `, type ${res.headers.get("content-type") ?? "none"}${hint}`,
+            );
+          }
           continue;
         }
         if (!res.ok) {
@@ -241,7 +301,14 @@ async function main() {
     if (failures.length > 20) console.log(`  …and ${failures.length - 20} more`);
   }
 
-  await conn.end();
+  // A table we could not even read is never a quiet line in the middle of a
+  // green run. It means files nobody has accounted for.
+  if (unreadable.length) {
+    console.error(`\n::error::${unreadable.length} table(s) could not be read, so their files were never checked:`);
+    for (const u of unreadable) console.error(`  ${u}`);
+    process.exit(1);
+  }
+
   // A missing cookie is a thing to go and get, not a broken run. Only an
   // unexpected failure turns the job red.
   if (APPLY && totalFailed) process.exit(1);
