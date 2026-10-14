@@ -24,6 +24,7 @@ on:
           - schema
           - manus
           - media
+          - passdrift
       apply:
         description: "Write the changes (manus only — everything else ignores this)"
         type: boolean
@@ -90,6 +91,10 @@ jobs:
       - name: Check where the media files point
         if: inputs.audit == 'media'
         run: pnpm exec tsx scripts/mediaAudit.ts
+
+      - name: Check attendance against pass deductions
+        if: inputs.audit == 'passdrift'
+        run: pnpm exec tsx scripts/passDriftAudit.ts
 
       # Brings across what Manus recorded after the 29 September snapshot: the
       # rehearsals, their attendance, the pass orders and the balances.
