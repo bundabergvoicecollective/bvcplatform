@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import BVCLayout from "@/components/BVCLayout";
@@ -67,12 +68,15 @@ function StatCard({
     </CardContent>
   );
   if (href) {
+    // wouter's Link, not a bare <a>: an anchor reloads the whole app, and with
+    // min-instances=0 that can mean several seconds of blank screen if the
+    // instance has scaled down. This navigates in place, instantly.
     return (
-      <a href={href} className="block">
+      <Link href={href} className="block">
         <Card className="border-0 shadow-sm cursor-pointer transition-shadow hover:shadow-md active:scale-[0.98]">
           {inner}
         </Card>
-      </a>
+      </Link>
     );
   }
   return (
@@ -526,24 +530,28 @@ function AdminDashboard() {
             label="Total Members"
             value={stats?.totalMembers ?? 0}
             accent="oklch(0.22 0.07 240)"
+            href="/members"
           />
           <StatCard
             icon={Calendar}
             label="Sessions Held"
             value={stats?.totalSessions ?? 0}
             accent="oklch(0.55 0.14 185)"
+            href="/attendance"
           />
           <StatCard
             icon={Music2}
             label="Library Items"
             value={stats?.totalLibraryItems ?? 0}
             accent="oklch(0.78 0.17 75)"
+            href="/library"
           />
           <StatCard
             icon={Megaphone}
             label="Announcements"
             value={stats?.totalAnnouncements ?? 0}
             accent="oklch(0.65 0.12 185)"
+            href="/announcements"
           />
         </div>
       )}
