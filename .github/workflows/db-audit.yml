@@ -23,6 +23,7 @@ on:
           - recency
           - schema
           - manus
+          - media
       apply:
         description: "Write the changes (manus only — everything else ignores this)"
         type: boolean
@@ -85,6 +86,10 @@ jobs:
       - name: Check how current the data is
         if: inputs.audit == 'recency'
         run: pnpm exec tsx scripts/dataRecency.ts
+
+      - name: Check where the media files point
+        if: inputs.audit == 'media'
+        run: pnpm exec tsx scripts/mediaAudit.ts
 
       # Brings across what Manus recorded after the 29 September snapshot: the
       # rehearsals, their attendance, the pass orders and the balances.
