@@ -1,3 +1,39 @@
+# What is still in Manus
+
+Two gaps, easy to confuse, with different fixes. Both are covered here.
+
+| | what is missing | fix |
+| --- | --- | --- |
+| **Rows** | content Manus has that this database has never seen | `manuscontent` |
+| **Files** | objects the rows point at that are not in our bucket | `mediabackfill` |
+
+## The rows
+
+The 29 September import covered rehearsals, attendance, orders, passes and
+members. It never touched content, so every content table stops dead on that
+date:
+
+| | rows here | newest |
+| --- | --- | --- |
+| library items | 83 (Manus has 110) | 29 Sep 2026 |
+| performances | 5 | 30 Aug 2026 |
+| gallery posts | 12 | 12 Sep 2026 |
+| announcements | 2 | 8 Sep 2026 |
+| documents | 2 | 18 May 2026 |
+
+`scripts/manusContentSync.ts`, via Actions → **Database audit** →
+`manuscontent`, reads Manus's own tRPC procedures with a signed-in cookie and
+adds what is missing — and copies the files in the same pass, so a new row
+never arrives as a broken link. Nothing is updated or deleted; a row that
+matches is left alone, so it is safe to re-run.
+
+Matching is on `fileKey` for anything with a file, because that is what an
+upload makes unique. Performances and announcements have no file, so they
+match on title plus date.
+
+`scripts/manusContentExport.js` does the same read from the browser console
+and is the fallback if the cookie route ever stops working.
+
 # The files behind the rows
 
 The 29 September migration brought the database across and left every file
@@ -60,7 +96,8 @@ copied everything it could.
 
 14 October 2026: the 24 files Manus serves openly — 19 avatars, 3 performance
 images, 2 documents — are in the bucket, and the member photos load. The 102
-library and gallery files are still only on Manus, waiting on the cookie.
+library and gallery files are still only on Manus, waiting on the cookie, as
+are the 27 library rows that were never imported at all.
 
 ## The deadline that matters
 
