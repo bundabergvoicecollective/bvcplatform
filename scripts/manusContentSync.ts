@@ -57,16 +57,43 @@ function shape(key: string): string {
 
 type Row = Record<string, unknown>;
 
+/**
+ * Set the moment Manus answers like we are not signed in. A Manus session
+ * cookie expires on its own schedule, and an expired one makes every read
+ * fail the same quiet way: nothing to import, nothing wrong, green tick.
+ * That is precisely the shape of the drizzle-kit push failure in CLAUDE.md —
+ * a step that reported success for weeks and applied nothing — so it is
+ * worth more than a logged line. A run that could not authenticate exits 1
+ * and says why.
+ */
+let authFailed = false;
+
 /** One tRPC query against Manus, with the admin's cookie. */
 async function call(proc: string): Promise<unknown> {
   const input = encodeURIComponent(JSON.stringify({ json: null }));
   const res = await fetch(`${HOST}/api/trpc/${proc}?input=${input}`, {
     headers: COOKIE ? { cookie: COOKIE, accept: "application/json" } : { accept: "application/json" },
     signal: AbortSignal.timeout(60_000),
+    redirect: "follow",
   });
+  if (res.status === 401 || res.status === 403) {
+    authFailed = true;
+    throw new Error(`HTTP ${res.status} — not signed in`);
+  }
+  // A login page comes back as 200 HTML, not as an error. Without this the
+  // JSON parse below fails and reads as "that procedure does not exist".
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html")) {
+    authFailed = true;
+    throw new Error("got a web page, not JSON — the session is not signed in");
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = (await res.json()) as Record<string, unknown>;
-  if ((body as { error?: unknown }).error) throw new Error("tRPC error");
+  if ((body as { error?: unknown }).error) {
+    const message = JSON.stringify((body as { error?: unknown }).error);
+    if (/UNAUTHORIZED|FORBIDDEN|not signed in|session/i.test(message)) authFailed = true;
+    throw new Error("tRPC error");
+  }
   const result = (body as { result?: { data?: unknown } }).result?.data;
   return (result as { json?: unknown })?.json ?? result ?? body;
 }
@@ -167,6 +194,8 @@ async function main() {
   let grandCopied = 0;
   let grandRefused = 0;
   let grandFailed = 0;
+  let sectionsRead = 0;
+  let sectionsTried = 0;
 
   /** Everything a section needs: where to read it, how to identify it, how to write it. */
   type Section = {
@@ -316,12 +345,14 @@ async function main() {
   for (const section of sections) {
     if (ONLY && ONLY !== section.name) continue;
 
+    sectionsTried++;
     const { proc, rows, tried } = await firstList(section.candidates);
     if (!proc) {
       console.log(`${section.label}: could not read from Manus`);
       for (const t of tried) console.log(`    ${t}`);
       continue;
     }
+    sectionsRead++;
 
     const have = await section.existing();
     const seen = new Set<string>();
@@ -398,12 +429,25 @@ async function main() {
   }
 
   console.log("");
+
+  // Nothing read, or Manus said we are not signed in: say so as an error and
+  // exit 1. A silent zero here would look exactly like "already up to date".
+  if (authFailed || (sectionsTried > 0 && sectionsRead === 0)) {
+    await conn.end();
+    console.error(
+      "\n::error::Manus would not answer — the MANUS_COOKIE secret is missing, expired or for\n" +
+        "the wrong site. Nothing was imported. Sign in to the Manus admin, take a fresh\n" +
+        "Cookie header, update the secret, and run this again.",
+    );
+    process.exit(1);
+  }
+
   if (APPLY) {
     console.log(`${grandNewRows} row(s) added, ${grandCopied} file(s) copied.`);
     if (grandRefused) {
       console.log(
         `${grandRefused} file(s) were refused even with the cookie — it may have expired.\n` +
-          "Take a fresh one from a request in DevTools → Network and run this again.",
+          "Take a fresh one and run this again; it skips everything already copied.",
       );
     }
     if (grandFailed) console.log(`${grandFailed} file(s) failed for another reason.`);
@@ -412,6 +456,12 @@ async function main() {
   }
 
   await conn.end();
+
+  // Refused files with a cookie set is the same expiry, caught one step later.
+  if (APPLY && grandRefused && !grandCopied) {
+    console.error("\n::error::Every file was refused. The cookie is not being accepted for storage.");
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {

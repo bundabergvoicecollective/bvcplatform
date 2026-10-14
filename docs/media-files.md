@@ -34,6 +34,33 @@ match on title plus date.
 `scripts/manusContentExport.js` does the same read from the browser console
 and is the fallback if the cookie route ever stops working.
 
+### About the cookie
+
+Get it by hand and let `gh` read it without echoing:
+
+```
+gh secret set MANUS_COOKIE --repo bundabergvoicecollective/bvcplatform
+```
+
+No temp file, no shell-history entry, and nothing through a transcript. The
+value comes from DevTools → **Application** → Cookies →
+`https://bundavoice-k8a8akbx.manus.space`, or Network → any request →
+Request Headers → `Cookie` for the whole header string.
+
+Two things that outlive the copying:
+
+- An Actions secret is readable by every workflow run in this repository and
+  by anyone with write access. This one is a live admin session for the old
+  site. **Delete the secret once the migration is finished**, and sign out of
+  Manus once to invalidate it.
+- A Manus session cookie expires or rotates on its own schedule. An expired
+  one makes every read fail the same quiet way — nothing imported, nothing
+  obviously wrong — which is exactly how `drizzle-kit push` reported success
+  for weeks while applying nothing. `manusContentSync.ts` therefore treats a
+  401, a 403 or an HTML page where JSON was expected as an authentication
+  failure, says so as an Actions error, and exits 1. A green tick on that job
+  means it really did read Manus.
+
 # The files behind the rows
 
 The 29 September migration brought the database across and left every file
