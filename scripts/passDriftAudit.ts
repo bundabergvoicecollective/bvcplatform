@@ -87,29 +87,40 @@ async function main() {
     );
   }
 
-  // The other half: deductions with no attendance behind them. Rarer, but it
-  // is the one that takes sessions off a member who was not there.
-  const orphans = await query<{ n: number }[]>(
-    `SELECT count(*) AS n
+  // The other half: sessions taken off a member who was not there.
+  //
+  // This has to net restores against deductions, not count deductions. Marking
+  // somebody present and then un-marking them writes both, and the member ends
+  // up square — counting only the deduction reports a lost session that was
+  // handed straight back, which is a false alarm about the one thing people
+  // would most want to trust.
+  const net = await query<{ userId: number; day: string; taken: number; marks: number }[]>(
+    `SELECT l.userId AS userId,
+            DATE_FORMAT(DATE_ADD(l.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d') AS day,
+            SUM(l.balanceBefore - l.balanceAfter) AS taken,
+            (SELECT count(*) FROM attendance a
+              WHERE a.userId = l.userId AND a.attended = 1 AND a.passUsed = 1
+                AND DATE_FORMAT(DATE_ADD(a.markedAt, INTERVAL 10 HOUR), '%Y-%m-%d')
+                    = DATE_FORMAT(DATE_ADD(l.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d')
+            ) AS marks
        FROM user_activity_log l
       WHERE l.action = 'attendance_marked'
-        AND l.balanceAfter < l.balanceBefore
+        AND l.balanceBefore IS NOT NULL AND l.balanceAfter IS NOT NULL
         AND l.createdAt >= ?
-        AND NOT EXISTS (
-          SELECT 1 FROM attendance a
-           WHERE a.userId = l.userId
-             AND a.passUsed = 1
-             AND DATE_FORMAT(DATE_ADD(a.markedAt, INTERVAL 10 HOUR), '%Y-%m-%d')
-                 = DATE_FORMAT(DATE_ADD(l.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d')
-        )`,
+      GROUP BY l.userId, day
+     HAVING taken > marks`,
     [`${SINCE} 00:00:00`],
   );
-  const n = Number(orphans[0]?.n ?? 0);
-  console.log(
-    n
-      ? `\n! ${n} deduction(s) logged with no pass-using attendance on the same day —\n  somebody may have lost a session they should still have.`
-      : "\nNo deductions without attendance behind them either.",
-  );
+
+  if (!net.length) {
+    console.log("\nAnd nobody has lost a session they should still have.");
+  } else {
+    console.log(`\n! ${net.length} member-day(s) where more was taken than attendance accounts for:`);
+    for (const r of net) {
+      console.log(`  user #${r.userId}  ${r.day}  ${r.taken} session(s) taken, ${r.marks} mark(s)`);
+    }
+    console.log("\nAdd the difference back under Admin → Members.");
+  }
 
   await conn.end();
 }
