@@ -27,6 +27,7 @@ on:
           - mediabackfill
           - manuscontent
           - storageprobe
+          - memberdiff
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
@@ -167,6 +168,15 @@ jobs:
           MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
           MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
         run: pnpm exec tsx scripts/manusStoragePro.ts
+
+      # Who does Manus have that we do not? Read-only, writes nothing.
+      # Addresses masked and names cut to initials — the log is public.
+      - name: Compare the member lists
+        if: inputs.audit == 'memberdiff'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+        run: pnpm exec tsx scripts/memberDiff.ts
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
