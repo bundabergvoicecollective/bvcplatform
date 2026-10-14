@@ -24,9 +24,10 @@ on:
           - schema
           - manus
           - media
+          - mediabackfill
           - passdrift
       apply:
-        description: "Write the changes (manus only — everything else ignores this)"
+        description: "Write the changes (manus and mediabackfill only — everything else ignores this)"
         type: boolean
         required: false
         default: false
@@ -88,9 +89,43 @@ jobs:
         if: inputs.audit == 'recency'
         run: pnpm exec tsx scripts/dataRecency.ts
 
+      # The R2 credentials are passed so the audit can ask the bucket whether
+      # each file is really in there. Without them it can only report where
+      # rows point, and a working path looks exactly like a broken one.
       - name: Check where the media files point
         if: inputs.audit == 'media'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: bvc-storage
         run: pnpm exec tsx scripts/mediaAudit.ts
+
+      # Copies the files the 29 September migration left behind: it brought
+      # the rows across and not the objects they point at, so every library
+      # item, photo and avatar is a path to something that is not in our
+      # bucket. Reports unless `apply` is ticked; with it, fetches each file
+      # from Manus and writes it under the key the row already uses, so no
+      # row has to change.
+      #
+      # MANUS_COOKIE is only needed if Manus will not serve its storage
+      # without a session. The dry run says so in as many words.
+      - name: Copy the media files Manus still holds
+        if: inputs.audit == 'mediabackfill'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: bvc-storage
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/mediaBackfill.ts --apply
+          else
+            pnpm exec tsx scripts/mediaBackfill.ts
+          fi
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
