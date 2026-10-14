@@ -32,12 +32,18 @@ on:
           - income
           - procedures
           - gapfill
+          - paymenttrace
           - passdrift
       apply:
-        description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
+        description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
         type: boolean
         required: false
         default: false
+      args:
+        description: "Extra arguments (paymenttrace only, e.g. --amount=7500 --amount=1600)"
+        type: string
+        required: false
+        default: ""
 
 env:
   # TiDB connection details (not secret; the password is the DB_PASSWORD secret)
@@ -221,6 +227,14 @@ jobs:
           else
             pnpm exec tsx scripts/manusGapFill.ts
           fi
+
+      # Has a payment already been credited, and to whom? Read-only.
+      # Addresses masked; the log is public.
+      - name: Trace a payment
+        if: inputs.audit == 'paymenttrace'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/paymentTrace.ts $ARGS
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
