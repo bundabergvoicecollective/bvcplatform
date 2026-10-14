@@ -25,11 +25,39 @@ const ALLOWED_TAGS = [
 ];
 const ALLOWED_ATTR = ["href", "target", "rel", "src", "alt", "title"];
 
+/**
+ * ALLOWED_URI_REGEXP does not cover data: URIs on an <img>: DOMPurify permits
+ * those separately, by tag, and a test of `<img src="data:text/html;base64,…">`
+ * came back through the allowlist untouched. A browser will not execute HTML
+ * from an img, so this was not an open door — but an allowlist that quietly
+ * admits something it was written to exclude is not one you can reason about,
+ * and the next person to widen ALLOWED_TAGS would inherit the hole.
+ *
+ * Every image we place is uploaded to our own bucket and referenced by URL, so
+ * nothing legitimate loses anything.
+ *
+ * The hook is global to DOMPurify and registered once. Nothing else in this
+ * app sanitises, and if something starts to, it wants this rule too.
+ */
+let hooked = false;
+function installDataUriGuard() {
+  if (hooked) return;
+  hooked = true;
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    for (const attr of ["src", "href"]) {
+      const value = (node as Element).getAttribute?.(attr);
+      if (value && /^\s*data:/i.test(value)) (node as Element).removeAttribute(attr);
+    }
+  });
+}
+
 export function sanitizeRichText(html: string): string {
+  installDataUriGuard();
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
-    // javascript: and data: URLs in an href or src are the whole attack.
+    // javascript: in an href or src is the whole attack; data: is handled by
+    // the hook above, which this regex does not reach.
     ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/(?!\/))/i,
     ADD_ATTR: ["target"],
   });
