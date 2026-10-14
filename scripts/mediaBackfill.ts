@@ -21,8 +21,12 @@
  * Manus host. It runs in Actions, where the runner has open internet and the
  * R2 secrets are available.
  *
- * If Manus requires a session to serve its storage, put the cookie header in
- * the MANUS_COOKIE secret. The dry run says whether it is needed.
+ * Manus does not serve all of it the same way. Avatars, performance images
+ * and documents come back to anyone who asks; library and gallery answer 403
+ * without a session, which is Manus being careful about member-only material
+ * rather than anything being wrong. For those, put a signed-in Manus cookie
+ * header in the MANUS_COOKIE secret. A run that is only short of a cookie
+ * says so and still succeeds — it has copied everything it could.
  *
  * Usage:
  *   DATABASE_URL=... R2_* =... MANUS_HOST=https://…manus.space \
@@ -92,7 +96,9 @@ async function main() {
   let totalMissing = 0;
   let totalCopied = 0;
   let totalFailed = 0;
+  let totalNeedsAuth = 0;
   const failures: string[] = [];
+  const needsAuthIn = new Set<string>();
 
   for (const [table, urlCol, keyCol, label] of MEDIA) {
     if (ONLY && ONLY !== table) continue;
@@ -117,6 +123,7 @@ async function main() {
     let present = 0;
     let copied = 0;
     let failed = 0;
+    let needsAuth = 0;
     const missing: string[] = [];
 
     for (const key of keys) {
@@ -147,7 +154,17 @@ async function main() {
         const res = await fetch(url, {
           redirect: "follow",
           headers: cookie ? { cookie } : {},
+          // Without this a single unanswered request stalls the whole run.
+          signal: AbortSignal.timeout(120_000),
         });
+        if (res.status === 401 || res.status === 403) {
+          // Not a fault: Manus will not serve this without a session. Counted
+          // apart from real failures so a run that is only short of a cookie
+          // does not read as a broken one.
+          needsAuth++;
+          needsAuthIn.add(label);
+          continue;
+        }
         if (!res.ok) {
           failed++;
           failures.push(`${shape(key)} — HTTP ${res.status}`);
@@ -186,18 +203,36 @@ async function main() {
 
     totalCopied += copied;
     totalFailed += failed;
-    if (APPLY) console.log(`  copied ${copied}, failed ${failed}`);
+    totalNeedsAuth += needsAuth;
+    if (APPLY) {
+      console.log(
+        `  copied ${copied}` +
+          (needsAuth ? `, ${needsAuth} need a Manus session` : "") +
+          (failed ? `, ${failed} failed` : ""),
+      );
+    } else if (needsAuth) {
+      console.log(`  probe ${shape(missing[0])} — refused without a Manus session`);
+    }
   }
 
   console.log("");
   if (APPLY) {
-    console.log(`${totalCopied} file(s) copied into the bucket, ${totalFailed} failed.`);
+    console.log(`${totalCopied} file(s) copied into the bucket` + (totalFailed ? `, ${totalFailed} failed.` : "."));
     if (totalCopied) {
       console.log("The paths already in the database now resolve. No row was changed.");
     }
   } else {
     console.log(`${totalMissing} file(s) are missing from the bucket.`);
     console.log("Nothing was written. Re-run with `apply` ticked to copy them.");
+  }
+
+  if (totalNeedsAuth || (!APPLY && needsAuthIn.size)) {
+    console.log(
+      `\nManus will not serve ${[...needsAuthIn].join(" or ")} without a session.\n` +
+        "Sign in to the Manus admin, copy the Cookie header from any request in\n" +
+        "DevTools → Network, and save it as the MANUS_COOKIE repository secret.\n" +
+        "Then run this again — it skips everything already copied.",
+    );
   }
 
   if (failures.length) {
@@ -207,6 +242,8 @@ async function main() {
   }
 
   await conn.end();
+  // A missing cookie is a thing to go and get, not a broken run. Only an
+  // unexpected failure turns the job red.
   if (APPLY && totalFailed) process.exit(1);
 }
 
