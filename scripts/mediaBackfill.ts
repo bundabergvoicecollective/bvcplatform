@@ -99,6 +99,8 @@ async function main() {
   let totalNeedsAuth = 0;
   const failures: string[] = [];
   const needsAuthIn = new Set<string>();
+  // One refusal described in full is worth 110 counted.
+  let describedRefusal = false;
 
   for (const [table, urlCol, keyCol, label] of MEDIA) {
     if (ONLY && ONLY !== table) continue;
@@ -147,6 +149,7 @@ async function main() {
     // at all, and whether it needs a session to do it, is the thing most
     // worth knowing before a run that writes 126 objects.
     const toDo = APPLY ? missing : missing.slice(0, 1);
+    describedRefusal = false; // describe the first refusal in each table
 
     for (const key of toDo) {
       const url = `${host}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
@@ -158,11 +161,29 @@ async function main() {
           signal: AbortSignal.timeout(120_000),
         });
         if (res.status === 401 || res.status === 403) {
-          // Not a fault: Manus will not serve this without a session. Counted
-          // apart from real failures so a run that is only short of a cookie
-          // does not read as a broken one.
+          // Counted apart from real failures. With no cookie this just means
+          // Manus wants a session; WITH one it means something else, and the
+          // first such refusal is worth describing rather than guessing at —
+          // the status alone sent me down the wrong path once already.
           needsAuth++;
           needsAuthIn.add(label);
+          if (!describedRefusal) {
+            describedRefusal = true;
+            let hint = "";
+            try {
+              const text = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 160);
+              if (text) hint = `  body: ${text}`;
+            } catch {
+              /* nothing to add */
+            }
+            const landed = new URL(res.url);
+            console.log(
+              `  refused ${shape(key)} — HTTP ${res.status}` +
+                `, served by ${landed.host}${landed.pathname.slice(0, 40)}` +
+                `, redirected: ${res.redirected}` +
+                `, type ${res.headers.get("content-type") ?? "none"}${hint}`,
+            );
+          }
           continue;
         }
         if (!res.ok) {
