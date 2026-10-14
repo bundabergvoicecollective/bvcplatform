@@ -56,6 +56,26 @@ function keyFromUrl(url: string | null, storedKey: string | null): string | null
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/**
+ * Where to FETCH a file from on Manus — which is not the same thing as the
+ * key to store it under.
+ *
+ * The stored fileUrl is the exact string the Manus UI links to, already
+ * encoded however Manus encodes it. Rebuilding it from the key instead, a
+ * path segment at a time, is a no-op for `avatars/9f3c21.jpg` and is not a
+ * no-op for `library/Angels We Have Heard On High - Bass.mp3` — and a key
+ * that does not exist comes back from S3 as AccessDenied, not as a 404,
+ * because the caller cannot list the bucket. That read as a permission wall
+ * and cost a detour through cookies and CloudFront before a probe showed the
+ * same file returning 200 from the URL the app itself uses.
+ *
+ * So: the stored URL when there is one, and only otherwise the rebuilt key.
+ */
+function fetchPath(url: string | null, key: string): string {
+  if (url && url.startsWith("/")) return url;
+  return `/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 /** A key is a file path and this log is public, so only its shape is printed. */
 function shape(key: string): string {
   const slash = key.lastIndexOf("/");
@@ -116,7 +136,15 @@ async function main() {
       continue;
     }
 
-    const keys = [...new Set(rows.map((r) => keyFromUrl(r.u, r.k)).filter((k): k is string => !!k))];
+    // key → where to fetch it from. The key is what we store under; the URL
+    // is the app's own link, which is the only one that resolves. See
+    // fetchPath above for why those are not the same string.
+    const source = new Map<string, string>();
+    for (const r of rows) {
+      const k = keyFromUrl(r.u, r.k);
+      if (k && !source.has(k)) source.set(k, fetchPath(r.u, k));
+    }
+    const keys = [...source.keys()];
     if (!keys.length) {
       console.log(`${label}: nothing to do`);
       continue;
@@ -152,7 +180,7 @@ async function main() {
     describedRefusal = false; // describe the first refusal in each table
 
     for (const key of toDo) {
-      const url = `${host}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
+      const url = `${host}${source.get(key)}`;
       try {
         const res = await fetch(url, {
           redirect: "follow",

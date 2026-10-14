@@ -161,8 +161,16 @@ async function main() {
   );
   if (!admin) throw new Error("No admin user to attribute imported rows to.");
 
-  /** Fetch a file from Manus and put it in our bucket under the same key. */
-  async function copyFile(key: string): Promise<"copied" | "present" | "refused" | "failed"> {
+  /**
+   * Fetch a file from Manus and put it in our bucket under the same key.
+   *
+   * `url` is the row's own fileUrl, which is what the Manus UI links to.
+   * Rebuilding it from the key and re-encoding each segment produces a
+   * different key for anything with a space in its name — the whole library —
+   * and S3 answers a missing key with AccessDenied rather than a 404, which
+   * reads exactly like a permission problem. Pass the stored URL.
+   */
+  async function copyFile(key: string, url: string): Promise<"copied" | "present" | "refused" | "failed"> {
     if (!s3) return "failed";
     try {
       await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
@@ -171,7 +179,6 @@ async function main() {
       /* not there yet — fetch it */
     }
     try {
-      const url = `${HOST}/manus-storage/${key.split("/").map(encodeURIComponent).join("/")}`;
       const res = await fetch(url, {
         headers: COOKIE ? { cookie: COOKIE } : {},
         redirect: "follow",
@@ -207,6 +214,8 @@ async function main() {
     existing: () => Promise<Set<string>>;
     /** The storage key behind the row, if it has one. */
     fileKey: (row: Row) => string | null;
+    /** The row's own link to that file, which is the one that resolves. */
+    fileUrl: (row: Row) => string | null;
     insert: (row: Row) => Promise<void>;
   };
 
@@ -221,6 +230,7 @@ async function main() {
         return new Set(rows.map((r) => r.fileKey));
       },
       fileKey: (r) => str(pick(r, "fileKey", "key")),
+      fileUrl: (r) => str(pick(r, "fileUrl", "url")),
       insert: async (r) => {
         const key = str(pick(r, "fileKey", "key"))!;
         const rawType = String(pick(r, "type", "itemType") ?? "sheet_music");
@@ -253,6 +263,7 @@ async function main() {
         return new Set(rows.map((r) => r.fileKey));
       },
       fileKey: (r) => str(pick(r, "fileKey", "key")),
+      fileUrl: (r) => str(pick(r, "fileUrl", "url")),
       insert: async (r) => {
         const key = str(pick(r, "fileKey", "key"))!;
         await query(
@@ -286,6 +297,7 @@ async function main() {
         return new Set(rows.map((r) => `${r.title}|${r.d}`));
       },
       fileKey: (r) => str(pick(r, "imageKey")),
+      fileUrl: (r) => str(pick(r, "imageUrl")),
       insert: async (r) => {
         const cat = String(pick(r, "category") ?? "other");
         await query(
@@ -319,6 +331,7 @@ async function main() {
         return new Set(rows.map((r) => `${r.title}|${r.d}`));
       },
       fileKey: (r) => str(pick(r, "attachmentKey")),
+      fileUrl: (r) => str(pick(r, "attachmentUrl")),
       insert: async (r) => {
         const cat = String(pick(r, "category") ?? "general");
         await query(
@@ -404,13 +417,25 @@ async function main() {
     // Now the files — for every row of ours, new or not, since the 83 that
     // were already here are missing their files too.
     if (!s3) continue;
-    const keys = [...new Set(rows.map((r) => section.fileKey(r)).filter((k): k is string => !!k))];
+    const source = new Map<string, string>();
+    for (const r of rows) {
+      const k = section.fileKey(r);
+      if (!k || source.has(k)) continue;
+      const u = section.fileUrl(r);
+      source.set(
+        k,
+        u && u.startsWith("/")
+          ? `${HOST}${u}`
+          : `${HOST}/manus-storage/${k.split("/").map(encodeURIComponent).join("/")}`,
+      );
+    }
+    const keys = [...source.keys()];
     let copied = 0;
     let refused = 0;
     let failedFiles = 0;
     let firstRefused: string | null = null;
     for (const key of keys) {
-      const outcome = await copyFile(key);
+      const outcome = await copyFile(key, source.get(key)!);
       if (outcome === "copied") copied++;
       else if (outcome === "refused") {
         refused++;
