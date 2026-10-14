@@ -67,6 +67,32 @@ async function firstList(candidates: string[], input: unknown = null): Promise<{
   return null;
 }
 
+/**
+ * A procedure that takes a parent id. The name of that id is not something the
+ * bundle gives up — eventId, id, postId are all plausible — so each is tried
+ * until one answers, and the shape that worked is reused for the rest.
+ */
+async function listForParent(
+  proc: string,
+  id: number,
+  keys: string[],
+  remember: { key?: string },
+): Promise<Row[] | null> {
+  const order = remember.key ? [remember.key, ...keys.filter((k) => k !== remember.key)] : keys;
+  for (const key of order) {
+    try {
+      const rows = asList(await call(proc, { [key]: id }));
+      if (rows) {
+        remember.key = key;
+        return rows;
+      }
+    } catch {
+      /* try the next key name */
+    }
+  }
+  return null;
+}
+
 async function main() {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("DATABASE_URL is not set.");
@@ -99,8 +125,14 @@ async function main() {
   const ours = new Map<string, number | null>();
   for (const t of TABLES) ours.set(t, await count(t));
 
-  const eventIds = ((await conn.query("SELECT id FROM events"))[0] as { id: number }[]).map((r) => r.id);
+  const eventTitles = (await conn.query("SELECT id, title FROM events ORDER BY eventDate"))[0] as { id: number; title: string }[];
+  const eventIds = eventTitles.map((r) => r.id);
   const postIds = ((await conn.query("SELECT id FROM gallery_posts"))[0] as { id: number }[]).map((r) => r.id);
+  const sessionIds = ((await conn.query("SELECT id FROM sessions"))[0] as { id: number }[]).map((r) => r.id);
+  const userIds = ((await conn.query("SELECT id FROM users"))[0] as { id: number }[]).map((r) => r.id);
+  const rsvpByEvent = (await conn.query(
+    "SELECT eventId, count(*) AS n FROM event_rsvps GROUP BY eventId",
+  ))[0] as { eventId: number; n: number }[];
   await conn.end();
 
   console.log("Comparing Manus against this database, table by table.\n");
@@ -125,54 +157,97 @@ async function main() {
   /** A flat list from Manus, by whichever procedure name answers. */
   const flat = async (table: string, candidates: string[]) => {
     const got = await firstList(candidates);
-    report(table, got ? got.rows.length : "?", got ? "" : "  (no procedure answered)");
+    report(table, got ? got.rows.length : "?", got ? `  (${got.proc})` : "  (no procedure answered)");
     return got?.rows ?? [];
   };
 
-  await flat("users", ["members.list", "users.list", "members.all", "admin.members"]);
-  await flat("sessions", ["sessions.list", "rehearsals.list", "sessions.all"]);
-  await flat("attendance", ["attendance.all", "attendance.list"]);
-  await flat("passes", ["passes.all", "passes.list"]);
-  await flat("pass_orders", ["passOrders.list", "orders.list", "passes.orders"]);
-  await flat("announcements", ["announcements.list", "announcements.all"]);
-  await flat("library_items", ["library.list", "library.all", "libraryItems.list"]);
-  await flat("documents", ["documents.list", "documents.all"]);
-  await flat("events", ["events.list", "events.all"]);
-  await flat("gallery_posts", ["gallery.list", "gallery.feed", "gallery.posts", "gallery.all"]);
+  // members.list returns the approved roll (73); members.listAll includes
+  // pending and denied, which is what our users table holds.
+  await flat("users", ["members.listAll", "members.list"]);
+  await flat("sessions", ["sessions.list"]);
+  // attendance has no flat list — it is per session. Handled below.
+  // passes are per user. Handled below.
+  await flat("pass_orders", ["payments.allOrders"]);
+  await flat("announcements", ["announcements.list"]);
+  await flat("library_items", ["library.list"]);
+  await flat("documents", ["documents.list"]);
+  await flat("events", ["events.list"]);
+  const galleryRows = await flat("gallery_posts", ["gallery.list"]);
   await flat("live_streams", ["liveStreams.list"]);
-  await flat("rehearsal_recordings", ["rehearsalRecordings.list", "recordings.list"]);
-  await flat("groups", ["groups.list", "groups.all"]);
-  await flat("shop_products", ["shop.products", "shop.list", "shop.listProducts"]);
-  await flat("shop_orders", ["shop.orders", "shopOrders.list"]);
+  await flat("rehearsal_recordings", ["recordings.list"]);
+  await flat("groups", ["groups.adminList", "groups.list"]);
+  await flat("shop_products", ["shop.adminListProducts", "shop.listProducts"]);
+  await flat("shop_orders", ["shop.myOrders"], );
 
   // The ones that hang off a parent. These are what get forgotten, because
   // nothing lists them on their own — which is exactly how 28 RSVPs went
   // missing behind an event that imported cleanly.
-  const perParent = async (
-    table: string,
-    parents: number[],
-    candidates: string[],
-    inputKey: string,
-  ) => {
+  const perParent = async (table: string, parents: number[], proc: string, keys: string[]) => {
     if (!parents.length) {
       report(table, 0, "  (no parents to ask about)");
-      return;
+      return [] as { id: number; n: number }[];
     }
+    const remember: { key?: string } = {};
+    const per: { id: number; n: number }[] = [];
     let total = 0;
     let answered = 0;
     for (const id of parents) {
-      const got = await firstList(candidates, { [inputKey]: id });
-      if (got) {
-        total += got.rows.length;
+      const rows = await listForParent(proc, id, keys, remember);
+      if (rows) {
+        total += rows.length;
         answered++;
+        per.push({ id, n: rows.length });
       }
     }
-    report(table, answered ? total : "?", answered ? `  (${answered}/${parents.length} asked)` : "  (no procedure answered)");
+    report(
+      table,
+      answered ? total : "?",
+      answered
+        ? `  (${proc}, ${answered}/${parents.length})`
+        : `  (${proc} did not answer)`,
+    );
+    return per;
   };
 
-  await perParent("event_rsvps", eventIds, ["events.rsvps", "events.getRsvps", "rsvps.list", "events.attendees"], "eventId");
-  await perParent("gallery_reactions", postIds, ["gallery.reactions", "gallery.getReactions"], "postId");
-  await perParent("gallery_comments", postIds, ["gallery.comments", "gallery.getComments"], "postId");
+  const rsvpsPerEvent = await perParent("event_rsvps", eventIds, "events.rsvpList", ["eventId", "id", "eventID"]);
+  await perParent("gallery_comments", postIds, "gallery.listComments", ["postId", "id", "galleryPostId"]);
+  await perParent("attendance", sessionIds, "attendance.forSession", ["sessionId", "id"]);
+  await perParent("passes", userIds, "passes.forUser", ["userId", "id"]);
+
+  // Reactions have no list procedure of their own; if gallery.list carries
+  // them per post, count them from there rather than reporting unknown.
+  if (galleryRows.length) {
+    const keys = Object.keys(galleryRows[0]);
+    const reactionKey = keys.find((k) => /reaction/i.test(k));
+    if (reactionKey) {
+      const n = galleryRows.reduce((sum, r) => {
+        const v = r[reactionKey];
+        return sum + (Array.isArray(v) ? v.length : typeof v === "number" ? v : 0);
+      }, 0);
+      report("gallery_reactions", n, `  (from gallery.list.${reactionKey})`);
+    } else {
+      report("gallery_reactions", "?", `  (gallery.list has no reaction field; keys: ${keys.slice(0, 8).join(", ")})`);
+    }
+  }
+
+  // Which event is short? One number for 6 events hides the whole problem —
+  // the Carols event has 3 RSVPs here against 28 there, and a matching grand
+  // total across the others would have buried it.
+  if (rsvpsPerEvent.length) {
+    console.log("\nRSVPs per performance (ours / Manus):");
+    const oursPerEvent = new Map(rsvpByEvent.map((r) => [r.eventId, Number(r.n)]));
+    const titles = new Map(eventTitles.map((e) => [e.id, e.title]));
+    for (const { id, n } of rsvpsPerEvent) {
+      const mine = oursPerEvent.get(id) ?? 0;
+      const flag = n > mine ? `  ← ${n - mine} MISSING HERE` : n < mine ? "  (we have more)" : "";
+      console.log(`  ${String(titles.get(id) ?? `#${id}`).slice(0, 44).padEnd(46)} ${String(mine).padStart(3)} / ${String(n).padStart(3)}${flag}`);
+    }
+    console.log(
+      "\n  Event ids line up because the rows were imported with Manus's own ids\n" +
+        "  — if they ever stop lining up these numbers mean nothing, so check a\n" +
+        "  title you recognise before trusting the column.",
+    );
+  }
 
   console.log(
     "\nTables with no Manus equivalent to ask about — ours alone, nothing to compare:\n" +
