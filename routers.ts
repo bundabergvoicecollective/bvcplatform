@@ -63,7 +63,6 @@ import {
   sendDirectMessage,
   sendGroupMessage,
   topUpPass,
-  restorePassSession,
   updateAnnouncement,
   updateEvent,
   updateGroup,
@@ -71,7 +70,7 @@ import {
   updateUserRole,
   updateUserStatus,
   getPendingMembers,
-  upsertAttendance,
+  applyAttendance,
   registerLiveStreamAttendance,
   getMembersForDM,
   getAdminUsers,
@@ -523,14 +522,6 @@ const coreRouter = router({
         const activePass = await getActivePassForUser(input.userId);
         const hasPass = activePass && activePass.remainingSessions > 0;
 
-        const record = await upsertAttendance(
-          input.sessionId,
-          input.userId,
-          input.attended,
-          input.attended && !!hasPass && sessionType === "pass", // passUsed only for pass type
-          sessionType
-        );
-
         // Auto-deduct: deduct when newly marking attended AND member has a pass AND not complimentary
         const shouldDeduct = input.attended && !!hasPass && !wasPassUsed && sessionType === "pass";
         // Restore: if un-marking attendance and a pass was previously used (not complimentary)
@@ -540,9 +531,35 @@ const coreRouter = router({
         // Restore if switching FROM complimentary TO pass on an already-attended record
         const switchFromComp = input.attended && wasComplimentary && !input.complimentary && !!hasPass;
 
-        if (shouldDeduct) {
-          const balanceBefore = activePass?.remainingSessions ?? null;
-          const { newBalance } = await deductPassSession(input.userId);
+        // The row and the balance move together or not at all. They used to be
+        // two separate writes with nothing joining them, which is the state
+        // scripts/passDriftAudit.ts was written to look for. See
+        // applyAttendance in db.ts.
+        //
+        // Everything after this point is reporting — the activity log, the
+        // notifications, the low-balance email. None of it is allowed to hold
+        // the transaction open, and none of it changes a balance.
+        const passChange = shouldDeduct || switchFromComp
+          ? "deduct"
+          : shouldRestore || switchToComp
+            ? "restore"
+            : "none";
+        const { record, balanceBefore, balanceAfter, deducted } = await applyAttendance({
+          sessionId: input.sessionId,
+          userId: input.userId,
+          attended: input.attended,
+          passUsed: input.attended && !!hasPass && sessionType === "pass", // passUsed only for pass type
+          sessionType,
+          passChange,
+        });
+
+        // applyAttendance may have downgraded a pass to a single session, if
+        // the locked read found the pass already empty. The log below follows
+        // what was written, not what was asked for.
+        sessionType = (record?.sessionType as typeof sessionType) ?? sessionType;
+
+        if (shouldDeduct && deducted) {
+          const newBalance = balanceAfter ?? 0;
           // Audit log: session deducted
           await logActivity({
             userId: input.userId,
@@ -679,12 +696,10 @@ const coreRouter = router({
           }
         } else if (shouldRestore || switchToComp) {
           // Restore a session to the pass: either un-marking attendance, or switching to complimentary
-          // Uses restorePassSession (not topUpPass) so remainingSessions never exceeds totalSessions
-          const passBeforeRestore = await getActivePassForUser(input.userId);
-          const balanceBeforeRestore = passBeforeRestore?.remainingSessions ?? null;
-          if (passBeforeRestore) await restorePassSession(passBeforeRestore.id);
-          const passAfterRestore = await getActivePassForUser(input.userId);
-          const balanceAfterRestore = passAfterRestore?.remainingSessions ?? null;
+          // applyAttendance caps the restore at totalSessions, so an un-mark can
+          // never hand back more than the pass was sold with
+          const balanceBeforeRestore = balanceBefore;
+          const balanceAfterRestore = balanceAfter;
           const restoreAction = shouldRestore ? "attendance_unmarked" : "pass_restored";
           const restoreDetail = shouldRestore
             ? `Attendance un-marked (session restored). Balance: ${balanceBeforeRestore} → ${balanceAfterRestore}.`
@@ -699,11 +714,8 @@ const coreRouter = router({
           }).catch(() => {});
         } else if (switchFromComp) {
           // Switching from complimentary to pass — deduct a session now
-          const passBeforeSwitch = await getActivePassForUser(input.userId);
-          const balanceBeforeSwitch = passBeforeSwitch?.remainingSessions ?? null;
-          await deductPassSession(input.userId);
-          const passAfterSwitch = await getActivePassForUser(input.userId);
-          const balanceAfterSwitch = passAfterSwitch?.remainingSessions ?? null;
+          const balanceBeforeSwitch = balanceBefore;
+          const balanceAfterSwitch = balanceAfter;
           await logActivity({
             userId: input.userId,
             actorId: ctx.user.id,

@@ -36,12 +36,14 @@ import {
   markPassOrderReceiptSent,
   createSession,
   createRehearsalRecording,
+  createPassOrder,
 } from "../db";
 import { storagePut, storagePutStream } from "../storage";
 import { notifyOwner } from "../_core/notification";
 import { getRequestUser } from "../_core/auth-helper";
 import { sendOnlinePassReceipt, shouldIssueOnlinePassReceipt } from "../passReceipt";
 import { getDisplayName } from "@shared/const";
+import { PASS_PRODUCTS } from "../products";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -82,6 +84,124 @@ async function startServer() {
   await ensureDatabase();
   const app = express();
   const server = createServer(app);
+
+/**
+ * A completed Square payment that our checkout did not start.
+ *
+ * Matches the payer to a member by the address Square collected, and the
+ * product by the exact amount. Both must be unambiguous: anything else is
+ * reported to the admin rather than guessed at, because the failure mode of
+ * guessing is giving somebody sessions they did not buy.
+ *
+ * Idempotent on Square's payment id. Square retries webhooks, and the second
+ * delivery of a $140 payment must not be a second 10-pass.
+ */
+async function grantFromUnattributedPayment(payment: Record<string, unknown>): Promise<void> {
+  const paymentId = String(payment.id ?? "");
+  const amountMoney = (payment.amount_money ?? payment.amountMoney) as { amount?: number | bigint } | undefined;
+  const amountCents = amountMoney?.amount != null ? Number(amountMoney.amount) : 0;
+  const email = String(payment.buyer_email_address ?? payment.buyerEmailAddress ?? "").toLowerCase().trim();
+
+  if (!paymentId) {
+    console.warn("[Square Webhook] Unattributed payment with no id — ignoring");
+    return;
+  }
+
+  // Already handled: a retry, or the admin recorded it by hand in between.
+  const seen = await getPassOrderByStripeSession(paymentId);
+  if (seen) {
+    console.log(`[Square Webhook] Payment ${paymentId} already recorded — nothing to do`);
+    return;
+  }
+
+  // Only the three real prices, matched exactly. A member paying some other
+  // amount is not buying a pass as far as this is concerned.
+  const product = (["single", "5-pass", "10-pass"] as const)
+    .map((key) => ({ key, ...PASS_PRODUCTS[key] }))
+    .find((p) => p.amountCents === amountCents);
+
+  const members = await getAllMembers(); // active members only; denied rows are excluded
+  const matches = email ? members.filter((m) => (m.email ?? "").toLowerCase().trim() === email) : [];
+  const member = matches.length === 1 ? matches[0] : null;
+
+  if (!product || !member) {
+    const why = !product
+      ? `$${(amountCents / 100).toFixed(2)} is not a pass price`
+      : matches.length > 1
+        ? `${matches.length} members share ${email}`
+        : email
+          ? `no member has the address ${email}`
+          : "Square gave no email address";
+    console.warn(`[Square Webhook] Payment ${paymentId} not matched: ${why}`);
+    await notifyOwner({
+      title: `Square payment needs recording by hand`,
+      content:
+        `A payment of $${(amountCents / 100).toFixed(2)} came through Square that the platform could not\n` +
+        `attribute: ${why}.\n\n` +
+        `Square payment id: ${paymentId}\n` +
+        `Buyer email: ${email || "(none)"}\n\n` +
+        `No pass has been granted. Record it against the right member under\n` +
+        `Admin → Members if it was a pass purchase.`,
+    }).catch(() => {});
+    return;
+  }
+
+  // Record the money first, so the grant below is attached to an order and the
+  // payment id is claimed before any retry can arrive.
+  await createPassOrder({
+    userId: member.id,
+    paymentSessionId: paymentId,
+    paymentProvider: "square",
+    passType: product.key,
+    sessionCount: product.sessionCount,
+    amountCents,
+    paymentMethod: "square",
+    status: "paid",
+    notes: `Matched automatically from a Square payment (${email})`,
+  });
+
+  const existingPass = await getActivePassForUser(member.id);
+  const balanceBefore = existingPass?.remainingSessions ?? 0;
+  const pass = existingPass
+    ? await topUpPass(existingPass.id, product.sessionCount)
+    : await assignPass({
+        userId: member.id,
+        totalSessions: product.sessionCount,
+        assignedBy: 0,
+        notes: `Purchased via Square — ${product.key}`,
+      });
+  const balanceAfter = pass?.remainingSessions ?? product.sessionCount;
+
+  await logActivity({
+    userId: member.id,
+    actorId: 0,
+    action: "pass_purchased",
+    detail:
+      `Square payment matched by email: ${product.key} (+${product.sessionCount}). ` +
+      `Balance: ${balanceBefore} → ${balanceAfter}.`,
+    balanceBefore,
+    balanceAfter,
+  }).catch(() => {});
+
+  await createNotification({
+    userId: member.id,
+    type: "general",
+    title: "Pass updated",
+    message: `Your payment was received. You now have ${balanceAfter} session${balanceAfter === 1 ? "" : "s"} remaining.`,
+  }).catch(() => {});
+
+  const name = getDisplayName(member, `Member #${member.id}`);
+  await notifyOwner({
+    title: `${name} bought a ${product.key} through Square`,
+    content:
+      `${name} (${email}) paid $${(amountCents / 100).toFixed(2)} through Square and has been given\n` +
+      `${product.sessionCount} session${product.sessionCount === 1 ? "" : "s"}. Balance: ${balanceBefore} → ${balanceAfter}.\n\n` +
+      `This payment did not come from the platform's own checkout, so it was matched\n` +
+      `by email address and amount.`,
+  }).catch(() => {});
+
+  console.log(`[Square Webhook] Matched payment ${paymentId} to member #${member.id}: +${product.sessionCount}`);
+}
 
   // ── Square webhook MUST be registered before express.json() ─────────────
   app.post(
@@ -156,7 +276,11 @@ async function startServer() {
 
           const userId = parseInt(meta["user_id"] ?? "0", 10);
           if (!userId) {
-            console.warn("[Square Webhook] No user_id in note metadata, skipping");
+            // A payment taken directly in Square — a payment link made in the
+            // Square dashboard, or a card tapped at rehearsal — carries none of
+            // our metadata, because our checkout never created it. Those were
+            // being dropped on the floor: the money arrived and no pass did.
+            await grantFromUnattributedPayment(payment);
             return res.json({ received: true });
           }
 
