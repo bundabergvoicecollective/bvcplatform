@@ -26,6 +26,7 @@ on:
           - media
           - mediabackfill
           - manuscontent
+          - storageprobe
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
@@ -156,6 +157,16 @@ jobs:
           else
             pnpm exec tsx scripts/manusContentSync.ts
           fi
+
+      # Read-only, no writes anywhere. Tells a CloudFront signed-URL refusal
+      # apart from an object that was never there — S3 answers AccessDenied
+      # for both, and the two have completely different fixes.
+      - name: Probe how Manus serves its storage
+        if: inputs.audit == 'storageprobe'
+        env:
+          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
+          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
+        run: pnpm exec tsx scripts/manusStoragePro.ts
 
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
