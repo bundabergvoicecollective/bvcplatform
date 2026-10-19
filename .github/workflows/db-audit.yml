@@ -34,6 +34,7 @@ on:
           - gapfill
           - paymenttrace
           - recordpayment
+          - emailprobe
           - passdrift
       apply:
         description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
@@ -254,6 +255,22 @@ jobs:
             pnpm exec tsx scripts/recordPayment.ts $ARGS --apply
           else
             pnpm exec tsx scripts/recordPayment.ts $ARGS
+          fi
+
+      # Does outbound email actually leave, and what does Resend say about it?
+      # Connects and logs in by default; `apply` ticked posts one real message
+      # to the address in `args`, and to nobody else.
+      - name: Probe outbound email
+        if: inputs.audit == 'emailprobe'
+        env:
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/emailProbe.ts $ARGS --send
+          else
+            pnpm exec tsx scripts/emailProbe.ts $ARGS
           fi
 
       - name: Check attendance against pass deductions

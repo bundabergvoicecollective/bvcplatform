@@ -1335,7 +1335,13 @@ function InviteMemberDialog({ open, onClose }: { open: boolean; onClose: () => v
             <div className="rounded-lg p-4 space-y-2" style={{ background: "oklch(0.96 0.03 185)" }}>
               <div className="flex items-center gap-2">
                 <UserPlus className="w-5 h-5 shrink-0" style={{ color: "oklch(0.55 0.14 185)" }} />
-                <p className="font-semibold text-sm" style={{ color: "oklch(0.22 0.07 240)" }}>Invite sent!</p>
+                {/* The headline used to say "Invite sent!" whichever way the
+                    send went, so a failed one still read as a success at a
+                    glance. The body text below was right all along; this
+                    makes the heading agree with it. */}
+                <p className="font-semibold text-sm" style={{ color: "oklch(0.22 0.07 240)" }}>
+                  {result.emailSent ? "Invite sent!" : "Invite link created"}
+                </p>
               </div>
               {result.emailSent ? (
                 <p className="text-sm" style={{ color: "oklch(0.35 0.05 185)" }}>
