@@ -32,12 +32,20 @@ on:
           - income
           - procedures
           - gapfill
+          - paymenttrace
+          - recordpayment
+          - emailprobe
           - passdrift
       apply:
-        description: "Write the changes (manus, mediabackfill and manuscontent only — everything else ignores this)"
+        description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
         type: boolean
         required: false
         default: false
+      args:
+        description: "Extra arguments (paymenttrace / recordpayment, e.g. --email=x@y.com --pass=5-pass)"
+        type: string
+        required: false
+        default: ""
 
 env:
   # TiDB connection details (not secret; the password is the DB_PASSWORD secret)
@@ -220,6 +228,49 @@ jobs:
             pnpm exec tsx scripts/manusGapFill.ts --apply
           else
             pnpm exec tsx scripts/manusGapFill.ts
+          fi
+
+      # Has a payment already been credited, and to whom? Read-only.
+      # Addresses masked; the log is public.
+      - name: Trace a payment
+        if: inputs.audit == 'paymenttrace'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/paymentTrace.ts $ARGS
+
+      # Records a payment that reached the bank and never reached here, and
+      # credits the sessions. Reports unless `apply` is ticked, and refuses to
+      # record the same amount for the same member twice.
+      - name: Record a payment taken outside the platform
+        if: inputs.audit == 'recordpayment'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass arguments, e.g. --email=someone@example.com --pass=5-pass --method=square"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/recordPayment.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/recordPayment.ts $ARGS
+          fi
+
+      # Does outbound email actually leave, and what does Resend say about it?
+      # Connects and logs in by default; `apply` ticked posts one real message
+      # to the address in `args`, and to nobody else.
+      - name: Probe outbound email
+        if: inputs.audit == 'emailprobe'
+        env:
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/emailProbe.ts $ARGS --send
+          else
+            pnpm exec tsx scripts/emailProbe.ts $ARGS
           fi
 
       - name: Check attendance against pass deductions

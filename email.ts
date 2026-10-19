@@ -35,13 +35,26 @@ export async function sendEmail(opts: SendEmailOptions): Promise<boolean> {
 
   try {
     const transport = createTransport();
-    await transport.sendMail({
+    const info = await transport.sendMail({
       from: ENV.smtpFrom,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text,
     });
+    // The provider's message id is the only handle on what happened next.
+    // Accepted is not delivered: Resend can take a message and then bounce it,
+    // or the receiving mailbox can file it as spam, and from here both look
+    // exactly like success. Without this in the log there is nothing to look
+    // up when somebody says an invite never arrived — which is precisely the
+    // position this was in.
+    console.log(
+      `[Email] accepted for ${opts.to} — id ${info.messageId ?? "(none)"}, ` +
+        `response ${JSON.stringify(info.response ?? "(none)")}` +
+        (info.rejected?.length ? `, REJECTED ${JSON.stringify(info.rejected)}` : ""),
+    );
+    // nodemailer reports a per-recipient refusal here rather than throwing.
+    if (info.rejected?.length) return false;
     return true;
   } catch (err) {
     console.error("[Email] Failed to send to", opts.to, err);

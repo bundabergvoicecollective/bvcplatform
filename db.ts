@@ -1974,7 +1974,12 @@ export async function recordCashPayment(data: {
   amountCents: number;
   adminId: number;
   notes?: string;
-  paymentMethod?: "cash" | "complimentary";
+  // "square" is for a payment Square took that never reached the webhook —
+  // one made before the webhook existed, or a link sent from the Square
+  // dashboard. It is recorded as square rather than cash on purpose: the
+  // income tile sums Square from Square's own API and cash from this table,
+  // so calling a card payment "cash" counts the same money twice.
+  paymentMethod?: "cash" | "complimentary" | "square";
   /** The rehearsal the money was taken at. Defaults to the one it belongs to. */
   sessionId?: number;
 }) {
