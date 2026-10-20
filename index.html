@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <!-- Browser tab. Two sizes so the browser picks rather than downscales a
+         192 into 16 and turns the letters to mush. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bundaberg Voice Collective</title>
     <link rel="manifest" href="/manifest.json" />
@@ -11,7 +14,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="BVC" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <!-- iPhone and iPad home screen. 180x180 is the size iOS asks for; it
+         ignores the manifest entirely and uses this.
+         The file is deliberately square-cornered and fully opaque: iOS applies
+         its own squircle mask, so a pre-rounded icon gets rounded twice and
+         shows dark wedges at the corners, and iOS composites any transparency
+         onto black rather than onto the page colour. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
