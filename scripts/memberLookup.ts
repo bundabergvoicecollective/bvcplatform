@@ -69,24 +69,32 @@ async function main() {
     console.log(`     ${maskEmail(u.email)}  ·  ${u.status}  ·  ${u.role}  ·  password ${Number(u.hasPassword) ? "set" : "NOT set"}`);
     console.log(`     joined ${u.created}, last signed in ${u.lastSeen}`);
 
-    const att = await q<{ sessionType: string; n: number; first: string; last: string }[]>(
-      `SELECT a.sessionType, count(*) AS n,
-              DATE_FORMAT(DATE_ADD(MIN(s.sessionDate), INTERVAL 10 HOUR), '%Y-%m-%d') AS first,
-              DATE_FORMAT(DATE_ADD(MAX(s.sessionDate), INTERVAL 10 HOUR), '%Y-%m-%d') AS last
-         FROM attendance a JOIN sessions s ON s.id = a.sessionId
-        WHERE a.userId = ? AND a.attended = 1
-        GROUP BY a.sessionType`,
-      [u.id],
+    // Every rehearsal, and what this member's row says about it. Rows with
+    // attended = 0 matter as much as the ones without a row at all: until
+    // 27 October the attendance checkbox was disabled for the whole list
+    // while any one write was in flight, so taps during a roll could be
+    // swallowed. "No row" and "a row saying absent" tell different stories
+    // about what happened on the night.
+    const rows = await q<{ d: string; title: string; marked: number | null; t: string | null; paidCents: number }[]>(
+      `SELECT DATE_FORMAT(DATE_ADD(s.sessionDate, INTERVAL 10 HOUR), '%Y-%m-%d') AS d,
+              s.title, a.attended AS marked, a.sessionType AS t,
+              (SELECT COALESCE(SUM(o.amountCents), 0) FROM pass_orders o
+                WHERE o.userId = ? AND o.sessionId = s.id AND o.status = 'paid') AS paidCents
+         FROM sessions s
+         LEFT JOIN attendance a ON a.sessionId = s.id AND a.userId = ?
+        ORDER BY s.sessionDate DESC`,
+      [u.id, u.id],
     );
-    console.log(`     attendance: ${att.length ? att.map((r) => `${r.n}× ${r.sessionType} (${r.first} → ${r.last})`).join(", ") : "none"}`);
-
-    const dates = await q<{ d: string; t: string }[]>(
-      `SELECT DATE_FORMAT(DATE_ADD(s.sessionDate, INTERVAL 10 HOUR), '%Y-%m-%d') AS d, a.sessionType AS t
-         FROM attendance a JOIN sessions s ON s.id = a.sessionId
-        WHERE a.userId = ? AND a.attended = 1 ORDER BY s.sessionDate`,
-      [u.id],
-    );
-    if (dates.length) console.log(`       ${dates.map((r) => `${r.d} (${r.t})`).join(", ")}`);
+    const present = rows.filter((r) => Number(r.marked) === 1);
+    console.log(`     attendance: present at ${present.length} of ${rows.length} rehearsal(s)`);
+    for (const r of rows) {
+      const state =
+        r.marked === null ? "no row at all"
+        : Number(r.marked) === 1 ? `present (${r.t})`
+        : `marked ABSENT (${r.t})`;
+      const paid = Number(r.paidCents) > 0 ? `, $${(Number(r.paidCents) / 100).toFixed(2)} taken` : "";
+      console.log(`       ${r.d}  ${state}${paid}`);
+    }
 
     const [orders] = await q<{ n: number; cents: number }[]>(
       "SELECT count(*) AS n, COALESCE(SUM(amountCents),0) AS cents FROM pass_orders WHERE userId = ? AND status = 'paid'",
