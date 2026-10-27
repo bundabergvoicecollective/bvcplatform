@@ -161,7 +161,25 @@ export const passOrders = mysqlTable("pass_orders", {
   amountCents: int("amountCents").notNull(),
   currency: varchar("currency", { length: 8 }).default("aud").notNull(),
   status: mysqlEnum("status", ["pending", "paid", "failed", "cancelled"]).default("pending").notNull(),
+  // The settlement rail. Existing reporting keys off this — in particular the
+  // income tile sums Square from Square's own API and cash from this table, so
+  // a card payment recorded by hand is deliberately stored as "square" rather
+  // than "cash" to stop the same money being counted twice.
   paymentMethod: mysqlEnum("paymentMethod", ["stripe", "square", "cash", "complimentary"]).default("square").notNull(),
+  // What the money actually arrived as, which the rail above cannot express:
+  // a bank transfer and notes in a tin both land here as "cash".
+  //
+  // A separate nullable column rather than two more values on the enum,
+  // because adding an enum value is a MODIFY COLUMN and scripts/dbSchema.ts
+  // is additive only — it creates tables, adds columns and adds unique
+  // indexes, and never retypes. Widening the enum would mean a hand-run
+  // `drizzle-kit push` with someone there to answer its prompts, which is the
+  // thing that silently broke the deploy for a fortnight. A new column
+  // deploys the ordinary way.
+  //
+  // Null on every row written before 28 October 2026; the financials page
+  // reads the rail for those and says so.
+  paymentChannel: mysqlEnum("paymentChannel", ["cash", "eft", "card", "complimentary", "other"]),
   passId: int("passId"),
   // Which rehearsal this money was taken at. Cash and EFTPOS are collected at
   // a rehearsal and typed in afterwards — sometimes the next day — and without
