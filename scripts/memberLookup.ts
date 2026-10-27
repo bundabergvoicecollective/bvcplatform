@@ -20,6 +20,10 @@
 import mysql from "mysql2/promise";
 
 const Q = process.argv.find((a) => a.startsWith("--q="))?.slice(4);
+// --id is for following up a sweep, which prints ids and initials rather than
+// names because the log is public. Searching by the initials it gave you
+// would be guesswork; the id it gave you is exact.
+const ID = process.argv.find((a) => a.startsWith("--id="))?.slice(5);
 
 const initials = (s: string | null) =>
   (s ?? "").trim().split(/\s+/).filter(Boolean).map((p) => `${p[0].toUpperCase()}.`).join("") || "—";
@@ -29,35 +33,39 @@ const maskEmail = (e: string | null) =>
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  if (!Q) throw new Error("Pass --q=<something> — part of a name, login or address.");
+  if (!Q && !ID) throw new Error("Pass --q=<name, login or address> or --id=<member id>.");
 
   const conn = await mysql.createConnection(url);
   const q = async <T>(sql: string, p: unknown[] = []): Promise<T> => (await conn.query(sql, p))[0] as T;
   const like = `%${Q}%`;
 
-  const users = await q<{
-    id: number; openId: string; name: string | null; firstName: string | null;
-    lastName: string | null; email: string | null; status: string; role: string;
-    hasPassword: number; created: string; lastSeen: string;
-  }[]>(
-    `SELECT id, openId, name, firstName, lastName, email, status, role,
+  const select = `SELECT id, openId, name, firstName, lastName, email, status, role,
             (passwordHash IS NOT NULL AND passwordHash <> '') AS hasPassword,
             DATE_FORMAT(DATE_ADD(createdAt, INTERVAL 10 HOUR), '%Y-%m-%d') AS created,
             DATE_FORMAT(DATE_ADD(lastSignedIn, INTERVAL 10 HOUR), '%Y-%m-%d') AS lastSeen
-       FROM users
-      WHERE openId LIKE ? OR name LIKE ? OR firstName LIKE ? OR lastName LIKE ?
-         OR email LIKE ? OR CONCAT_WS(' ', firstName, lastName) LIKE ?
-      ORDER BY id`,
-    [like, like, like, like, like, like],
-  );
+       FROM users`;
+  type Row = {
+    id: number; openId: string; name: string | null; firstName: string | null;
+    lastName: string | null; email: string | null; status: string; role: string;
+    hasPassword: number; created: string; lastSeen: string;
+  };
+  const users = ID
+    ? await q<Row[]>(`${select} WHERE id = ?`, [Number(ID)])
+    : await q<Row[]>(
+        `${select}
+          WHERE openId LIKE ? OR name LIKE ? OR firstName LIKE ? OR lastName LIKE ?
+             OR email LIKE ? OR CONCAT_WS(' ', firstName, lastName) LIKE ?
+          ORDER BY id`,
+        [like, like, like, like, like, like],
+      );
 
   if (!users.length) {
-    console.log(`Nothing matches "${Q}".`);
+    console.log(`Nothing matches ${ID ? `#${ID}` : `"${Q}"`}.`);
     await conn.end();
     process.exit(0);
   }
 
-  console.log(`${users.length} account(s) matching "${Q}":\n`);
+  console.log(`${users.length} account(s) matching ${ID ? `#${ID}` : `"${Q}"`}:\n`);
 
   for (const u of users) {
     // The name the app will actually show: getDisplayName prefers

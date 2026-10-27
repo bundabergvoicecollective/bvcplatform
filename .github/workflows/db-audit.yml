@@ -42,6 +42,7 @@ on:
           - memberlookup
           - markattendance
           - attendancesweep
+          - checkout
       apply:
         description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments and markattendance only)"
         type: boolean
@@ -255,6 +256,20 @@ jobs:
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
           fi
+
+      # Why did an online pass purchase fail? Shows every order of every
+      # status, then asks Square whether our token and location still work —
+      # "the secret is set" and "the secret works" are different things, and
+      # only one of them is visible in the deploy log. Read-only unless
+      # --probe is passed, which creates one payment link and charges nobody.
+      - name: Diagnose a failed checkout
+        if: inputs.audit == 'checkout'
+        env:
+          SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
+          SQUARE_LOCATION_ID: ${{ secrets.SQUARE_LOCATION_ID }}
+          SQUARE_ENVIRONMENT: ${{ secrets.SQUARE_ENVIRONMENT }}
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/checkoutAudit.ts $ARGS
 
       # Who might be missing from a roll that was never fully marked? Shows
       # under-marked nights, members never ticked at anything, and members

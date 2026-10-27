@@ -1,0 +1,162 @@
+/**
+ * Why did a member's online pass purchase fail?
+ *
+ * payments.createCheckout asks Square for a payment link and only then writes
+ * a pending pass_order. So the presence of a row says which half broke:
+ *
+ *   no row at all      Square refused the link. Credentials, location, or
+ *                      Square itself. The member saw an error immediately.
+ *   a pending row      the link was made and the payment was not completed,
+ *                      or it was completed and the webhook never arrived.
+ *   a paid row         it worked; the complaint is about something else.
+ *
+ * It then asks Square directly whether our token and location are still
+ * good, because "the secret is set" and "the secret works" are different
+ * things and only one of them can be seen from the deploy log.
+ *
+ * Read-only by default: listing a location changes nothing. --probe also
+ * creates one real payment link to prove the exact call works — no money
+ * moves and nobody is charged, but it does make an order object in Square,
+ * so it is off unless asked for.
+ *
+ * Amounts, statuses and dates only; members as ids and initials. Public log.
+ *
+ * Usage: DATABASE_URL=… SQUARE_ACCESS_TOKEN=… SQUARE_LOCATION_ID=… \
+ *          tsx scripts/checkoutAudit.ts [--days=3] [--probe]
+ */
+import mysql from "mysql2/promise";
+import { SquareClient, SquareEnvironment } from "square";
+
+const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? 3);
+const PROBE = process.argv.includes("--probe");
+
+const initials = (first: string | null, last: string | null, name: string | null) => {
+  const parts = [first, last].filter(Boolean) as string[];
+  const src = parts.length ? parts : (name ?? "").split(/\s+/).filter(Boolean);
+  return src.map((p) => `${p[0].toUpperCase()}.`).join("") || "?";
+};
+
+async function main() {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set.");
+  const conn = await mysql.createConnection(url);
+  const q = async <T>(sql: string, p: unknown[] = []): Promise<T> => (await conn.query(sql, p))[0] as T;
+
+  // ── What the database saw ───────────────────────────────────────────────
+  console.log(`Pass orders of every status in the last ${DAYS} day(s):\n`);
+  const orders = await q<{
+    id: number; d: string; status: string; method: string; channel: string | null;
+    passType: string; cents: number; provider: string | null; ref: string | null;
+    firstName: string | null; lastName: string | null; name: string | null;
+  }[]>(
+    `SELECT o.id,
+            DATE_FORMAT(DATE_ADD(o.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d %H:%i') AS d,
+            o.status, o.paymentMethod AS method, o.paymentChannel AS channel,
+            o.passType, o.amountCents AS cents, o.paymentProvider AS provider,
+            o.paymentSessionId AS ref,
+            u.firstName, u.lastName, u.name
+       FROM pass_orders o LEFT JOIN users u ON u.id = o.userId
+      WHERE o.createdAt >= DATE_SUB(now(), INTERVAL ? DAY)
+      ORDER BY o.createdAt DESC`,
+    [DAYS],
+  );
+
+  if (!orders.length) {
+    console.log("  none at all — no order row was written, for any member, in that window.");
+    console.log("  If a member tried to buy a pass, Square refused the link before we");
+    console.log("  got as far as recording anything.\n");
+  } else {
+    for (const o of orders) {
+      console.log(
+        `  #${String(o.id).padEnd(8)} ${o.d}  ${o.status.padEnd(9)} ${o.passType.padEnd(16)}` +
+        ` $${(Number(o.cents) / 100).toFixed(2).padStart(7)}  ${(o.channel ?? o.method).padEnd(13)}` +
+        ` ${initials(o.firstName, o.lastName, o.name).padEnd(6)}${o.ref ? ` ref ${String(o.ref).slice(0, 12)}…` : " no square ref"}`,
+      );
+    }
+    const pending = orders.filter((o) => o.status === "pending");
+    if (pending.length) {
+      console.log(`\n  ${pending.length} pending. The link was created and the payment never`);
+      console.log("  completed — or it completed and the webhook never reached us.");
+    }
+    console.log("");
+  }
+
+  // Every pending order ever, because one stuck from tonight looks the same
+  // as one stuck for a month until you count them.
+  const [stuck] = await q<{ n: number; oldest: string | null }[]>(
+    `SELECT count(*) AS n,
+            DATE_FORMAT(DATE_ADD(MIN(createdAt), INTERVAL 10 HOUR), '%Y-%m-%d') AS oldest
+       FROM pass_orders WHERE status = 'pending'`,
+  );
+  console.log(`Pending orders in total: ${stuck.n}${stuck.oldest ? `, oldest ${stuck.oldest}` : ""}\n`);
+
+  await conn.end();
+
+  // ── What Square says ────────────────────────────────────────────────────
+  const token = process.env.SQUARE_ACCESS_TOKEN?.trim();
+  const locationId = process.env.SQUARE_LOCATION_ID?.trim();
+  if (!token || !locationId) {
+    console.log("SQUARE_ACCESS_TOKEN or SQUARE_LOCATION_ID is not set in this job — skipped.");
+    process.exit(0);
+  }
+
+  const client = new SquareClient({
+    token,
+    environment:
+      (process.env.SQUARE_ENVIRONMENT ?? "production") === "sandbox"
+        ? SquareEnvironment.Sandbox
+        : SquareEnvironment.Production,
+  });
+
+  console.log(`Asking Square (${process.env.SQUARE_ENVIRONMENT || "production"}) whether our credentials still work:`);
+  try {
+    const res = await client.locations.get({ locationId });
+    const loc = (res as { location?: { name?: string; status?: string; currency?: string; country?: string } }).location;
+    console.log(`  ok    location ${locationId} — ${loc?.name ?? "(unnamed)"}, ${loc?.status ?? "?"}, ${loc?.currency ?? "?"} ${loc?.country ?? ""}`);
+  } catch (err) {
+    const e = err as { statusCode?: number; errors?: { code?: string; detail?: string }[]; message?: string };
+    console.log(`  FAIL  Square refused: HTTP ${e.statusCode ?? "?"}`);
+    for (const detail of e.errors ?? []) console.log(`        ${detail.code}: ${detail.detail}`);
+    if (!e.errors?.length && e.message) console.log(`        ${e.message}`);
+    console.log("\n  This is why the purchase failed. The access token is wrong, expired or");
+    console.log("  revoked, or the location id does not belong to it. Nothing in the app");
+    console.log("  can work around that — it needs a fresh token in SQUARE_ACCESS_TOKEN.");
+    process.exit(1);
+  }
+
+  if (!PROBE) {
+    console.log("\n  Credentials are good. Re-run with --probe to create one real payment");
+    console.log("  link and prove the exact call the checkout makes. No money moves.");
+    process.exit(0);
+  }
+
+  console.log("\nCreating one payment link, the same call the checkout makes:");
+  try {
+    const res = await client.checkout.paymentLinks.create({
+      idempotencyKey: `audit-${Date.now()}`,
+      quickPay: {
+        name: "BVC 10-Session Pass",
+        priceMoney: { amount: BigInt(14000), currency: "AUD" },
+        locationId,
+      },
+      checkoutOptions: { redirectUrl: "https://members.bundabergvoicecollective.com.au/payments?success=1", askForShippingAddress: false },
+      paymentNote: "audit probe — not a real purchase",
+    });
+    const link = (res as { paymentLink?: { url?: string; orderId?: string } }).paymentLink;
+    console.log(link?.url ? `  ok    Square returned a link (order ${link.orderId}).` : "  FAIL  Square returned no link.");
+    console.log("        Nobody was charged. The link can be left to expire.");
+    if (!link?.url) process.exit(1);
+  } catch (err) {
+    const e = err as { statusCode?: number; errors?: { code?: string; detail?: string }[]; message?: string };
+    console.log(`  FAIL  HTTP ${e.statusCode ?? "?"}`);
+    for (const detail of e.errors ?? []) console.log(`        ${detail.code}: ${detail.detail}`);
+    if (!e.errors?.length && e.message) console.log(`        ${e.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error("Failed:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});
