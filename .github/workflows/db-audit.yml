@@ -152,6 +152,10 @@ jobs:
       - name: Look a message up at Resend
         if: inputs.audit == 'resendlookup'
         env:
+          # SMTP_PASS is a Sending-access key and Resend refuses reads with
+          # it. RESEND_API_KEY is for a Full-access key, and is used instead
+          # when it exists; the step still runs without one and says why.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ARGS: ${{ inputs.args }}
         run: |

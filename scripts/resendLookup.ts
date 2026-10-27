@@ -5,9 +5,11 @@
  * accepted, nothing more. Whether the message then reached a mailbox, bounced
  * or was marked as spam is only knowable from Resend, and only by id.
  *
- * Resend's SMTP password is an API key, so the SMTP_PASS secret is the same
- * credential the REST API wants. Nothing is sent and nothing is changed — this
- * is a GET.
+ * Resend's SMTP password is an API key, so SMTP_PASS is the same credential
+ * the REST API wants — but ours is a Sending-access key, and Resend answers
+ * `restricted_api_key` to any read. A Full-access key in RESEND_API_KEY is
+ * used in preference when one exists. Nothing is sent and nothing is changed
+ * — this is a GET.
  *
  * NOTHING FROM THE BODY IS PRINTED. A password-setup or invite message carries
  * a working token in its link, and this runs in Actions on a public
@@ -35,10 +37,11 @@ function mask(addr: string): string {
 
 async function main() {
   if (!ID) throw new Error("Pass --id=<resend message id>.");
-  const key = process.env.SMTP_PASS?.trim();
-  if (!key) throw new Error("SMTP_PASS is not set — that secret holds the Resend API key.");
+  const key = (process.env.RESEND_API_KEY ?? process.env.SMTP_PASS)?.trim();
+  if (!key) throw new Error("Neither RESEND_API_KEY nor SMTP_PASS is set.");
+  console.log(`Using ${process.env.RESEND_API_KEY?.trim() ? "RESEND_API_KEY" : "SMTP_PASS"}.\n`);
   if (!key.startsWith("re_")) {
-    console.log("Note: SMTP_PASS does not look like a Resend API key (re_…). If this 401s, that is why.\n");
+    console.log("Note: that value does not look like a Resend API key (re_…). If this 401s, that is why.\n");
   }
 
   const res = await fetch(`https://api.resend.com/emails/${encodeURIComponent(ID)}`, {
@@ -61,8 +64,8 @@ async function main() {
     console.log(
       "\nA Resend key is either Full access or Sending access. Sending-access keys\n" +
       "can post a message and cannot read one back, which is what this needs. If\n" +
-      "that is the reason, the fix is a second Full-access key — not a change to\n" +
-      "SMTP_PASS, which is doing its job.",
+      "that is the reason, the fix is a second Full-access key saved as the\n" +
+      "RESEND_API_KEY secret — not a change to SMTP_PASS, which is doing its job.",
     );
     process.exit(1);
   }
