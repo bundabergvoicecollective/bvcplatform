@@ -40,8 +40,9 @@ on:
           - newrehearsal
           - doorpayments
           - memberlookup
+          - markattendance
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal and doorpayments only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments and markattendance only)"
         type: boolean
         required: false
         default: false
@@ -252,6 +253,25 @@ jobs:
             pnpm exec tsx scripts/doorPayments.ts $ARGS --apply
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
+          fi
+
+      # Marks a member present at rehearsals that were never ticked. Only
+      # writes rows that are missing; a rehearsal that already has one is
+      # left alone. Deducts nothing — doorpayments records the money.
+      - name: Mark attendance that was never recorded
+        if: inputs.audit == 'markattendance'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass who and how many, e.g. --name=Firstname --count=3"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/markAttendance.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/markAttendance.ts $ARGS
           fi
 
       # Who is this account, and is there more than one of them? For a member
