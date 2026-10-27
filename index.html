@@ -33,7 +33,37 @@
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Something to look at while the bundle arrives, and — more importantly —
+         something other than a blank white screen if it never does. A member
+         who taps the Home Screen icon and sees nothing at all concludes the
+         app is broken and does not try again. -->
+    <div id="root">
+      <div id="boot" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#0e1a2b;color:#f5f5f0;font-family:system-ui,sans-serif;padding:24px;text-align:center;">
+        <img src="/icons/icon-192.png" alt="" width="72" height="72" style="border-radius:16px;" />
+        <p id="boot-text" style="margin:0;font-size:15px;opacity:.75;">Loading…</p>
+        <button
+          id="boot-retry"
+          hidden
+          onclick="location.reload()"
+          style="display:none;padding:10px 20px;border-radius:8px;border:0;background:#c9922a;color:#0e1a2b;font-size:15px;font-weight:600;"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+    <script>
+      // React replaces everything inside #root when it mounts, so if this is
+      // still here after a while the app never started. Say so, and give them
+      // a button, rather than leaving a white screen with no way out.
+      setTimeout(function () {
+        var boot = document.getElementById("boot");
+        if (!boot || !boot.isConnected) return;
+        var text = document.getElementById("boot-text");
+        var retry = document.getElementById("boot-retry");
+        if (text) text.textContent = "This is taking longer than it should.";
+        if (retry) { retry.hidden = false; retry.style.display = "inline-block"; }
+      }, 15000);
+    </script>
     <script type="module" src="/client/main.tsx"></script>
   </body>
 </html>
