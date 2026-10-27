@@ -38,8 +38,9 @@ on:
           - preflight
           - mediaurls
           - newrehearsal
+          - doorpayments
       apply:
-        description: "Write the changes (mediaurls, recordpayment and newrehearsal only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal and doorpayments only)"
         type: boolean
         required: false
         default: false
@@ -231,6 +232,26 @@ jobs:
       - name: Reconcile passes against payments and attendance
         if: inputs.audit == 'passreconcile'
         run: pnpm exec tsx scripts/passReconcile.ts
+
+      # Records money taken at the door for single sessions that were never
+      # charged for — the nights before the Attendance page started asking.
+      # Grants no sessions, and skips any rehearsal that already has a
+      # payment, so running it twice cannot charge anyone twice.
+      - name: Record door payments for missed single sessions
+        if: inputs.audit == 'doorpayments'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass who, e.g. --name=Firstname or --email=someone@example.com (no spaces — the args are word-split)"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/doorPayments.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/doorPayments.ts $ARGS
+          fi
 
       # The whole-site check before a rehearsal: does the deployed app answer,
       # does the API, do the stored files come back, and does a session row
