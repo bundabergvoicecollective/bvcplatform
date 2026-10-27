@@ -675,6 +675,7 @@ async function grantFromUnattributedPayment(payment: Record<string, unknown>): P
         title: `New music added: ${title}`,
         message: `${type === "sheet_music" ? "Sheet music" : "Backing track"}${artist ? ` by ${artist}` : ""} has been added to the music library.`,
         excludeUserId: user.id,
+        url: "/library",
       });
 
       return res.json(item);
@@ -800,6 +801,7 @@ async function grantFromUnattributedPayment(payment: Record<string, unknown>): P
           ? description.length > 120 ? description.slice(0, 120) + "…" : description
           : `A new document has been added to Forms & Documents.`,
         excludeUserId: user.id,
+        url: "/documents",
       });
 
       return res.json(doc);
