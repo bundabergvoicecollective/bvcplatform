@@ -41,6 +41,7 @@ on:
           - doorpayments
           - memberlookup
           - markattendance
+          - attendancesweep
       apply:
         description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments and markattendance only)"
         type: boolean
@@ -254,6 +255,16 @@ jobs:
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
           fi
+
+      # Who might be missing from a roll that was never fully marked? Shows
+      # under-marked nights, members never ticked at anything, and members
+      # holding unused sessions who have not been seen lately. Read-only, and
+      # it proves nothing on its own — it points at names to check.
+      - name: Sweep for attendance that may be missing
+        if: inputs.audit == 'attendancesweep'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/attendanceSweep.ts $ARGS
 
       # Marks a member present at rehearsals that were never ticked. Only
       # writes rows that are missing; a rehearsal that already has one is
