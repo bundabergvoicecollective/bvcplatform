@@ -13,18 +13,27 @@
 export function registerServiceWorker(): void {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
 
-  // After load, so it never competes with the first paint on a phone on 4G at
-  // a rehearsal hall.
   const register = () => {
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
-      // Private browsing and some locked-down configurations refuse. The app
-      // works without it; only push and the badge are lost.
-      console.warn("[SW] registration failed:", err);
-    });
+    try {
+      navigator.serviceWorker.register("/sw.js").catch((err) => {
+        // Private browsing and some locked-down configurations refuse. The app
+        // works without it; only push and the badge are lost.
+        console.warn("[SW] registration failed:", err);
+      });
+    } catch (err) {
+      // register() can throw synchronously rather than reject — WebKit does it
+      // in some standalone and restricted contexts. Catching only the promise
+      // was not enough.
+      console.warn("[SW] registration threw:", err);
+    }
   };
 
-  if (document.readyState === "complete") register();
-  else window.addEventListener("load", register, { once: true });
+  // Always deferred, never run inline. Registering during module evaluation
+  // put a synchronous throw on the path to createRoot, and the app never
+  // mounted. A timeout also covers the case where "load" has already fired
+  // and the listener would never run.
+  if (document.readyState === "complete") setTimeout(register, 0);
+  else window.addEventListener("load", () => setTimeout(register, 0), { once: true });
 }
 
 /**

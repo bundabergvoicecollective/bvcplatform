@@ -53,10 +53,6 @@ const trpcClient = trpc.createClient({
   ],
 });
 
-// For everybody, not only the people who find the Notifications page. Without
-// a worker there is no push and no home-screen badge, whatever they agreed to.
-registerServiceWorker();
-
 createRoot(document.getElementById("root")!).render(
   <trpc.Provider client={trpcClient} queryClient={queryClient}>
     <QueryClientProvider client={queryClient}>
@@ -64,3 +60,10 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </trpc.Provider>
 );
+
+// AFTER the app is mounted, never before. This used to run first, so anything
+// it threw stopped createRoot from ever being reached and the page stayed
+// white — which is exactly what an iPhone showed when the app was opened from
+// the Home Screen. Nothing about notifications is worth not rendering the app
+// for.
+registerServiceWorker();
