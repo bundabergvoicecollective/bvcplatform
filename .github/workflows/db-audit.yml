@@ -34,6 +34,7 @@ on:
           - emailprobe
           - resendlookup
           - passdrift
+          - passreconcile
           - preflight
           - mediaurls
           - newrehearsal
@@ -223,6 +224,13 @@ jobs:
           else
             pnpm exec tsx scripts/mediaUrlRepair.ts
           fi
+
+      # Not "where is the 122nd pass row" — Manus is gone and cannot be asked
+      # — but "is anyone short of sessions they paid for", which our own data
+      # can answer. Read-only; ids and initials only, the log is public.
+      - name: Reconcile passes against payments and attendance
+        if: inputs.audit == 'passreconcile'
+        run: pnpm exec tsx scripts/passReconcile.ts
 
       # The whole-site check before a rehearsal: does the deployed app answer,
       # does the API, do the stored files come back, and does a session row
