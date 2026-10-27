@@ -204,6 +204,7 @@ function SessionRow({
             userFirstName: member?.firstName ?? null,
             userLastName: member?.lastName ?? null,
             userEmail: member?.email ?? null,
+            paidCents: 0,
           });
         } else {
           rows[i] = { ...rows[i], attended: variables.attended, sessionType: guess };
@@ -371,6 +372,7 @@ function SessionRow({
                       sessionId={session.id}
                       attended={attended}
                       sessionType={sessionType as "pass" | "single" | "complimentary" | null}
+                      paidCents={rec?.paidCents ?? 0}
                       onMark={(attended, complimentary) =>
                         mark.mutate({ sessionId: session.id, userId: member.id, attended, complimentary })
                       }
@@ -517,17 +519,31 @@ function MemberAttendanceRow({
   sessionId: _sessionId,
   attended,
   sessionType,
+  paidCents,
   onMark,
 }: {
   member: { id: number; name: string | null; firstName?: string | null; lastName?: string | null; email: string | null };
   sessionId: number;
   attended: boolean;
   sessionType: "pass" | "single" | "complimentary" | null;
+  /** Taken at the door for this rehearsal already. */
+  paidCents: number;
   onMark: (attended: boolean, complimentary: boolean) => void;
 }) {
   const utils = trpc.useUtils();
   const { data: pass, refetch: refetchPass } = trpc.passes.activeForUser.useQuery({ userId: member.id });
   const isComplimentary = sessionType === "complimentary";
+
+  // Records the money without granting a session: it was used on the night.
+  const recordPayment = trpc.attendance.recordDoorPayment.useMutation({
+    onSuccess: () => {
+      utils.attendance.forSession.invalidate({ sessionId: _sessionId });
+      utils.dashboard.lastSessionIncome.invalidate();
+      utils.payments.financials.invalidate();
+      toast.success("Payment recorded against this rehearsal.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Undo timer ref — stores the toast ID so we can dismiss it on undo
   const undoToastRef = useRef<string | number | null>(null);
@@ -664,6 +680,46 @@ function MemberAttendanceRow({
           />
         </div>
       </div>
+
+      {/* Paid on the night? A single session deducts nothing, so without this
+          the money a member hands over at the door leaves no trace at all. */}
+      {attended && sessionType === "single" && paidCents === 0 && (
+        <div
+          className="flex flex-wrap items-center gap-1.5 mt-2 rounded-md px-2 py-1.5"
+          style={{ background: "oklch(0.97 0.02 75)" }}
+        >
+          <span className="text-xs font-medium" style={{ color: "oklch(0.42 0.1 75)" }}>
+            Single session — $16 not recorded:
+          </span>
+          {([
+            ["cash", "Cash"],
+            ["eft", "EFT"],
+            ["card", "Card"],
+          ] as const).map(([channel, label]) => (
+            <button
+              key={channel}
+              disabled={recordPayment.isPending}
+              onClick={() =>
+                recordPayment.mutate({
+                  sessionId: _sessionId,
+                  userId: member.id,
+                  amountCents: 1600,
+                  paymentChannel: channel,
+                })
+              }
+              className="text-xs px-2 py-0.5 rounded border transition-colors hover:bg-white disabled:opacity-50"
+              style={{ borderColor: "oklch(0.80 0.06 75)", color: "oklch(0.40 0.1 75)" }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {attended && sessionType === "single" && paidCents > 0 && (
+        <p className="text-xs mt-2" style={{ color: "oklch(0.52 0.12 150)" }}>
+          Single session — ${(paidCents / 100).toFixed(2)} recorded.
+        </p>
+      )}
 
       {/* Assign pass buttons with confirmation */}
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">

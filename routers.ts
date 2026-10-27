@@ -85,6 +85,7 @@ import {
   getSessionStats,
   createManualMember,
   recordCashPayment,
+  recordDoorPayment,
   updateUserProfile,
   listLiveStreams,
   getLiveStreamById,
@@ -501,6 +502,33 @@ const coreRouter = router({
         }
         return getAttendanceForUser(targetId);
       }),
+
+    /**
+     * Money handed over at the door for the night being marked. Separate from
+     * members.recordCashPayment because that grants the sessions it charges
+     * for, and a session paid for on the night has already been used.
+     */
+    recordDoorPayment: adminProcedure
+      .input(
+        z.object({
+          sessionId: z.number(),
+          userId: z.number(),
+          amountCents: z.number().int().min(1).max(100000),
+          paymentChannel: z.enum(["cash", "eft", "card", "other"]),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(({ input, ctx }) =>
+        recordDoorPayment({
+          userId: input.userId,
+          sessionId: input.sessionId,
+          amountCents: input.amountCents,
+          passType: "single",
+          paymentChannel: input.paymentChannel,
+          adminId: ctx.user.id,
+          notes: input.notes,
+        })
+      ),
 
     mark: adminProcedure
       .input(
