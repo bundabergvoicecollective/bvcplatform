@@ -38,8 +38,9 @@ on:
           - passdrift
           - preflight
           - mediaurls
+          - newrehearsal
       apply:
-        description: "Write the changes (manus, mediabackfill, manuscontent, gapfill and mediaurls only)"
+        description: "Write the changes (manus, mediabackfill, manuscontent, gapfill, mediaurls and newrehearsal only)"
         type: boolean
         required: false
         default: false
@@ -278,6 +279,25 @@ jobs:
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
         run: pnpm exec tsx scripts/passDriftAudit.ts
+
+      # Creates tonight's rehearsal row when the admin dialog will not. Takes
+      # --date in Brisbane time and refuses a second session on a day that
+      # already has one. Reports unless `apply` is ticked.
+      - name: Create a rehearsal session
+        if: inputs.audit == 'newrehearsal'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass the date, e.g. --date=2026-10-27T18:30 --title=\"October 27 Rehearsal\""
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/createRehearsal.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/createRehearsal.ts $ARGS
+          fi
 
       # The URL in a media row and the key in the same row can name different
       # objects, and the page is built from the URL while every audit asks the

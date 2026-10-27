@@ -37,10 +37,30 @@ import { toast } from "sonner";
 
 // ─── Create Session Dialog ────────────────────────────────────────────────────
 
+/**
+ * The rehearsal that is most likely being created: the coming Tuesday at
+ * 6:30pm, or today if today is Tuesday. Returned in the shape a
+ * datetime-local input wants, which is local time with no zone on the end.
+ */
+function nextRehearsal(): { value: string; title: string } {
+  const d = new Date();
+  // Tuesday is 2. On a Tuesday this stays today; otherwise it moves forward.
+  d.setDate(d.getDate() + ((2 - d.getDay() + 7) % 7));
+  d.setHours(18, 30, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:30`,
+    title: `${format(d, "MMMM d")} Rehearsal`,
+  };
+}
+
 function CreateSessionDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
+  const suggested = nextRehearsal();
+  // Filled in rather than blank: the session being created is almost always
+  // the coming Tuesday, and this way the usual case is one click.
+  const [title, setTitle] = useState(suggested.title);
+  const [date, setDate] = useState(suggested.value);
   const [notes, setNotes] = useState("");
 
   const utils = trpc.useUtils();
@@ -48,8 +68,9 @@ function CreateSessionDialog({ onCreated }: { onCreated: () => void }) {
     onSuccess: () => {
       utils.sessions.list.invalidate();
       setOpen(false);
-      setTitle("");
-      setDate("");
+      const next = nextRehearsal();
+      setTitle(next.title);
+      setDate(next.value);
       setNotes("");
       onCreated();
       toast.success("Session created");
@@ -103,10 +124,20 @@ function CreateSessionDialog({ onCreated }: { onCreated: () => void }) {
           <Button
             className="w-full font-semibold"
             style={{ background: "oklch(0.55 0.14 185)", color: "white" }}
-            disabled={!title || !date || create.isPending}
-            onClick={() =>
-              create.mutate({ title, sessionDate: new Date(date), notes: notes || undefined })
-            }
+            // Only ever disabled while the write is in flight. A
+            // datetime-local input reports an empty value until every one of
+            // its segments is valid, so gating on `date` left the button dead
+            // on a form showing a complete-looking date, with nothing on
+            // screen to say why.
+            disabled={create.isPending}
+            onClick={() => {
+              if (!title.trim()) return toast.error("Give the session a title.");
+              const when = new Date(date);
+              if (!date || Number.isNaN(when.getTime())) {
+                return toast.error("Pick a date and time — the date field is not filled in yet.");
+              }
+              create.mutate({ title: title.trim(), sessionDate: when, notes: notes || undefined });
+            }}
           >
             {create.isPending ? "Creating..." : "Create Session"}
           </Button>
