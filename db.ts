@@ -1202,6 +1202,7 @@ export async function getAllPassOrders() {
       currency: passOrders.currency,
       status: passOrders.status,
       paymentMethod: passOrders.paymentMethod,
+      paymentChannel: passOrders.paymentChannel,
       notes: passOrders.notes,
       passId: passOrders.passId,
       receiptSentAt: passOrders.receiptSentAt,
@@ -1980,6 +1981,13 @@ export async function recordCashPayment(data: {
   // income tile sums Square from Square's own API and cash from this table,
   // so calling a card payment "cash" counts the same money twice.
   paymentMethod?: "cash" | "complimentary" | "square";
+  /**
+   * How the money actually arrived. The rail above cannot say: a bank
+   * transfer and notes in a tin both have to be recorded as "cash" so the
+   * income tile counts them, because neither is in Square's API. This is
+   * what the financials breakdown reads.
+   */
+  paymentChannel?: "cash" | "eft" | "card" | "complimentary" | "other";
   /** The rehearsal the money was taken at. Defaults to the one it belongs to. */
   sessionId?: number;
 }) {
@@ -1999,6 +2007,7 @@ export async function recordCashPayment(data: {
     amountCents: data.amountCents,
     currency: "aud",
     paymentMethod: data.paymentMethod ?? "cash",
+    paymentChannel: data.paymentChannel ?? null,
     sessionId,
     notes: data.notes ?? null,
     status: "paid",
@@ -2692,6 +2701,7 @@ export async function getLastSessionIncome() {
       sessionCount: passOrders.sessionCount,
       amountCents: passOrders.amountCents,
       paymentMethod: passOrders.paymentMethod,
+      paymentChannel: passOrders.paymentChannel,
       notes: passOrders.notes,
       createdAt: passOrders.createdAt,
       userName: users.name,
@@ -2721,6 +2731,7 @@ export async function getLastSessionIncome() {
       sessionCount: o.sessionCount,
       amountCents: o.amountCents,
       paymentMethod: o.paymentMethod as string,
+      paymentChannel: o.paymentChannel,
       notes: o.notes,
       createdAt: o.createdAt,
       userName: o.userName,
@@ -2735,6 +2746,7 @@ export async function getLastSessionIncome() {
       sessionCount: o.sessionCount,
       amountCents: o.amountCents,
       paymentMethod: o.paymentMethod as string,
+      paymentChannel: o.paymentChannel,
       notes: o.notes,
       createdAt: o.createdAt,
       userName: o.userName,
