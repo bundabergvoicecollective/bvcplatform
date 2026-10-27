@@ -24,6 +24,7 @@ import {
   X,
   Banknote,
 } from "lucide-react";
+import { getDisplayName } from "@shared/const";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { updateAppBadge } from "@/lib/appBadge";
@@ -197,12 +198,12 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
               className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
               style={{ background: TEAL, color: "white" }}
             >
-              {user.name?.charAt(0)?.toUpperCase() ?? "?"}
+              {getDisplayName(user, "?").charAt(0).toUpperCase()}
             </div>
           )}
           <div className="min-w-0">
             <p className="text-sm font-medium truncate" style={{ color: "#f3f4f6" }}>
-              {user.name ?? "Member"}
+              {getDisplayName(user, "Member")}
             </p>
             <p className="text-xs capitalize" style={{ color: SIDEBAR_TEXT_MUTED }}>
               {role === "admin" ? "Administrator" : "Member"}
