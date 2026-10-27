@@ -16,6 +16,7 @@ import Library from "./pages/Library";
 import Announcements from "./pages/Announcements";
 import Members from "./pages/Members";
 import Payments from "./pages/Payments";
+import Financials from "./pages/Financials";
 import Messages from "./pages/Messages";
 import AdminPanel from "./pages/AdminPanel";
 import Groups from "./pages/Groups";
@@ -42,6 +43,7 @@ function Router() {
       <Route path="/announcements" component={Announcements} />
       <Route path="/members" component={Members} />
       <Route path="/payments" component={Payments} />
+      <Route path="/financials" component={Financials} />
       <Route path="/messages" component={Messages} />
       <Route path="/groups" component={Groups} />
       <Route path="/events" component={Events} />

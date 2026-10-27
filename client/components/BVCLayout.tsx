@@ -22,6 +22,7 @@ import {
   Users2,
   Video,
   X,
+  Banknote,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -45,6 +46,7 @@ const NAV_ITEMS = [
   { href: "/documents", label: "Forms & Documents", icon: FileText, roles: ["user", "admin"] },
   { href: "/shop", label: "Shop", icon: ShoppingBag, roles: ["user", "admin"] },
   { href: "/payments", label: "Payments", icon: CreditCard, roles: ["user", "admin"] },
+  { href: "/financials", label: "Financials", icon: Banknote, roles: ["admin"] },
   { href: "/profile", label: "My Profile", icon: UserCircle, roles: ["user", "admin"] },
   { href: "/admin", label: "Admin Panel", icon: Settings, roles: ["admin"] },
 ];

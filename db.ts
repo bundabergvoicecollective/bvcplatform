@@ -3173,3 +3173,217 @@ export async function getGalleryComment(commentId: number) {
   const [comment] = await db.select().from(galleryComments).where(eq(galleryComments.id, commentId));
   return comment ?? null;
 }
+
+// ─── Financials ───────────────────────────────────────────────────────────────
+
+/** A choir week runs Tuesday to Monday: rehearsal night first, not last. */
+export const WEEK_STARTS_ON_TUESDAY = 2;
+
+export type FinancialsPayment = {
+  id: number;
+  kind: "pass" | "shop";
+  /** Brisbane date the money belongs to, YYYY-MM-DD. */
+  date: string;
+  channel: "cash" | "eft" | "card" | "online" | "complimentary" | "other" | "unrecorded";
+  amountCents: number;
+  label: string;
+  memberName: string | null;
+  notes: string | null;
+};
+
+export type FinancialsWeek = {
+  /** Tuesday, YYYY-MM-DD. */
+  weekStart: string;
+  /** The Monday that closes it, YYYY-MM-DD. */
+  weekEnd: string;
+  /** The rehearsal that fell in this week, when there was one. */
+  sessionTitle: string | null;
+  cashCents: number;
+  eftCents: number;
+  onlineCents: number;
+  otherCents: number;
+  unrecordedCents: number;
+  shopCents: number;
+  totalCents: number;
+  compCount: number;
+  payments: FinancialsPayment[];
+};
+
+/**
+ * Every payment, bucketed into Tuesday-to-Monday weeks.
+ *
+ * Three things decide which week a payment lands in, and they are not the
+ * same thing:
+ *
+ *   the rehearsal it was taken at   when pass_orders.sessionId is set
+ *   the day it was entered          otherwise
+ *
+ * Cash counted on the night is often typed in the next morning, so matching
+ * on the day somebody opened the laptop puts Wednesday's entry in the wrong
+ * place. Rows written from 14 October 2026 carry sessionId and need no
+ * guessing; older ones fall back to the entry date. Brisbane on both sides —
+ * the column holds UTC and Brisbane is ten hours ahead, so a 7am Wednesday
+ * entry is still Tuesday in UTC.
+ *
+ * Channels: `cash`, `eft` and `other` come from paymentChannel, which has
+ * only been asked for since 28 October 2026. A manual row from before that
+ * is reported as `unrecorded` rather than guessed at — it may have been a
+ * bank transfer and there is no way to tell now. `online` is Square and
+ * Stripe: money that settled through a card rail without anyone typing it in.
+ */
+export async function getFinancials(opts: { weeks?: number } = {}) {
+  if (!db) return { weeks: [] as FinancialsWeek[], firstChannelDate: null as string | null };
+  const limit = Math.min(Math.max(opts.weeks ?? 16, 1), 104);
+
+  // The Brisbane day a pass payment belongs to, and the rehearsal it names.
+  const bris = sql`DATE_FORMAT(DATE_ADD(COALESCE(${sessions.sessionDate}, ${passOrders.createdAt}), INTERVAL 10 HOUR), '%Y-%m-%d')`;
+  const passRows = await db
+    .select({
+      id: passOrders.id,
+      date: bris,
+      channel: passOrders.paymentChannel,
+      method: passOrders.paymentMethod,
+      amountCents: passOrders.amountCents,
+      passType: passOrders.passType,
+      notes: passOrders.notes,
+      sessionTitle: sessions.title,
+      userName: users.name,
+      userFirstName: users.firstName,
+      userLastName: users.lastName,
+    })
+    .from(passOrders)
+    .leftJoin(users, eq(passOrders.userId, users.id))
+    .leftJoin(sessions, eq(passOrders.sessionId, sessions.id))
+    .where(eq(passOrders.status, "paid"));
+
+  const shopRows = await db
+    .select({
+      id: shopOrders.id,
+      date: sql<string>`DATE_FORMAT(DATE_ADD(${shopOrders.createdAt}, INTERVAL 10 HOUR), '%Y-%m-%d')`,
+      amountCents: shopOrders.totalCents,
+      userName: users.name,
+      userFirstName: users.firstName,
+      userLastName: users.lastName,
+    })
+    .from(shopOrders)
+    .leftJoin(users, eq(shopOrders.userId, users.id))
+    .where(eq(shopOrders.status, "paid"));
+
+  // Which rehearsal, if any, fell in each week — the heading people recognise.
+  const sessionRows = await db
+    .select({
+      title: sessions.title,
+      date: sql<string>`DATE_FORMAT(DATE_ADD(${sessions.sessionDate}, INTERVAL 10 HOUR), '%Y-%m-%d')`,
+    })
+    .from(sessions);
+
+  const [earliest] = await db
+    .select({ d: sql<string | null>`MIN(DATE_FORMAT(DATE_ADD(${passOrders.createdAt}, INTERVAL 10 HOUR), '%Y-%m-%d'))` })
+    .from(passOrders)
+    .where(sql`${passOrders.paymentChannel} IS NOT NULL`);
+
+  const named = (first: string | null, last: string | null, name: string | null) =>
+    `${first ?? ""} ${last ?? ""}`.trim() || name || null;
+
+  const weeks = new Map<string, FinancialsWeek>();
+  const blank = (weekStart: string): FinancialsWeek => ({
+    weekStart,
+    weekEnd: addDays(weekStart, 6),
+    sessionTitle: null,
+    cashCents: 0, eftCents: 0, onlineCents: 0, otherCents: 0,
+    unrecordedCents: 0, shopCents: 0, totalCents: 0, compCount: 0,
+    payments: [],
+  });
+  const weekOf = (date: string) => {
+    const key = tuesdayOf(date);
+    let w = weeks.get(key);
+    if (!w) weeks.set(key, (w = blank(key)));
+    return w;
+  };
+
+  for (const r of passRows) {
+    const date = r.date as string;
+    if (!date) continue;
+    const w = weekOf(date);
+    const amount = r.amountCents ?? 0;
+
+    // complimentary first: it is a grant, not income, and must never be summed
+    // into a column that looks like money.
+    const channel: FinancialsPayment["channel"] =
+      r.method === "complimentary" || r.channel === "complimentary"
+        ? "complimentary"
+        : r.channel === "eft" ? "eft"
+        : r.channel === "cash" ? "cash"
+        : r.channel === "other" ? "other"
+        : r.channel === "card" || r.method === "square" || r.method === "stripe" ? "online"
+        : "unrecorded";
+
+    if (channel === "complimentary") w.compCount += 1;
+    else if (channel === "cash") { w.cashCents += amount; w.totalCents += amount; }
+    else if (channel === "eft") { w.eftCents += amount; w.totalCents += amount; }
+    else if (channel === "online") { w.onlineCents += amount; w.totalCents += amount; }
+    else if (channel === "other") { w.otherCents += amount; w.totalCents += amount; }
+    else { w.unrecordedCents += amount; w.totalCents += amount; }
+
+    w.payments.push({
+      id: r.id,
+      kind: "pass",
+      date,
+      channel,
+      amountCents: amount,
+      label: r.passType,
+      memberName: named(r.userFirstName, r.userLastName, r.userName),
+      notes: r.notes,
+    });
+    if (r.sessionTitle) w.sessionTitle = r.sessionTitle;
+  }
+
+  for (const r of shopRows) {
+    const date = r.date;
+    if (!date) continue;
+    const w = weekOf(date);
+    const amount = r.amountCents ?? 0;
+    w.shopCents += amount;
+    w.totalCents += amount;
+    w.payments.push({
+      id: r.id,
+      kind: "shop",
+      date,
+      channel: "online",
+      amountCents: amount,
+      label: "Shop order",
+      memberName: named(r.userFirstName, r.userLastName, r.userName),
+      notes: null,
+    });
+  }
+
+  // A week with a rehearsal but no money still belongs in the table: "nothing
+  // was taken" is a finding, and a week that silently vanishes is not.
+  for (const s of sessionRows) {
+    if (!s.date) continue;
+    const w = weekOf(s.date);
+    w.sessionTitle = s.title;
+  }
+
+  const ordered = [...weeks.values()]
+    .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1))
+    .slice(0, limit);
+  for (const w of ordered) w.payments.sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  return { weeks: ordered, firstChannelDate: earliest?.d ?? null };
+}
+
+/** YYYY-MM-DD plus n days, without dragging a timezone into it. */
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The Tuesday on or before this date. */
+function tuesdayOf(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  // getUTCDay: 0 Sunday … 2 Tuesday. Wednesday goes back one, Monday back six.
+  const back = (d.getUTCDay() - WEEK_STARTS_ON_TUESDAY + 7) % 7;
+  return addDays(date, -back);
+}
