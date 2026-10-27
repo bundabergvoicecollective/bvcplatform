@@ -232,6 +232,19 @@ jobs:
         if: inputs.audit == 'passreconcile'
         run: pnpm exec tsx scripts/passReconcile.ts
 
+      # Who is this account, and is there more than one of them? For a member
+      # showing up under a login name rather than their own. Read-only.
+      - name: Look up a member
+        if: inputs.audit == 'memberlookup'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass --q=<part of a name, login or address>"
+            exit 1
+          fi
+          pnpm exec tsx scripts/memberLookup.ts $ARGS
+
       # The whole-site check before a rehearsal: does the deployed app answer,
       # does the API, do the stored files come back, and does a session row
       # exist for tonight. Read-only — it signs nobody in and writes no row.
