@@ -32,6 +32,7 @@ on:
           - paymenttrace
           - recordpayment
           - emailprobe
+          - resendlookup
           - passdrift
           - preflight
           - mediaurls
@@ -144,6 +145,25 @@ jobs:
           else
             pnpm exec tsx scripts/recordPayment.ts $ARGS
           fi
+
+      # What became of one message, by id. A GET against Resend — sends
+      # nothing, changes nothing — and it never prints the body, because a
+      # setup or invite link carries a working token and this log is public.
+      - name: Look a message up at Resend
+        if: inputs.audit == 'resendlookup'
+        env:
+          # SMTP_PASS is a Sending-access key and Resend refuses reads with
+          # it. RESEND_API_KEY is for a Full-access key, and is used instead
+          # when it exists; the step still runs without one and says why.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass the id, e.g. --id=01a151b1-3826-7316-a475-992198055757"
+            exit 1
+          fi
+          pnpm exec tsx scripts/resendLookup.ts $ARGS
 
       # Does outbound email actually leave, and what does Resend say about it?
       # Connects and logs in by default; `apply` ticked posts one real message
