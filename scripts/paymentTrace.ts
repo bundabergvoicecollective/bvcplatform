@@ -116,17 +116,26 @@ async function main() {
       console.log(`    ${o.d} UTC  $${(Number(o.cents) / 100).toFixed(2).padStart(7)}  ${o.method.padEnd(13)} ${o.passType.padEnd(14)} ${o.status}`);
     }
 
-    const log = await q<{ d: string; action: string; before: number | null; after: number | null }[]>(
+    const log = await q<{ d: string; action: string; before: number | null; after: number | null; detail: string | null }[]>(
       `SELECT DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS d, action,
-              balanceBefore AS \`before\`, balanceAfter AS \`after\`
-         FROM user_activity_log WHERE userId = ? ORDER BY createdAt DESC LIMIT 8`,
+              balanceBefore AS \`before\`, balanceAfter AS \`after\`, detail
+         FROM user_activity_log WHERE userId = ? ORDER BY createdAt DESC LIMIT 12`,
       [member.id],
     );
     console.log("  recent activity:");
     if (!log.length) console.log("    none");
     for (const l of log) {
       const move = l.before !== null && l.after !== null ? `  ${l.before} → ${l.after}` : "";
-      console.log(`    ${l.d} UTC  ${l.action}${move}`);
+      // The note is what says WHY a balance moved, and a credit without one
+      // is indistinguishable from a credit granted twice. It is admin-typed
+      // free text, so any address in it is masked before it reaches a public
+      // log, and it is cut short.
+      const note = (l.detail ?? "")
+        .replace(/[\w.+-]+@[\w.-]+/g, (m) => shown(m))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 90);
+      console.log(`    ${l.d} UTC  ${l.action}${move}${note ? `  — ${note}` : ""}`);
     }
     console.log("");
   }
