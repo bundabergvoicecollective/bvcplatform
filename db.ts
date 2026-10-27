@@ -421,6 +421,16 @@ export async function getAttendanceForSession(sessionId: number) {
       userFirstName: users.firstName,
       userLastName: users.lastName,
       userEmail: users.email,
+      // What was taken at the door for THIS rehearsal, so the page can see a
+      // single session that nobody has been charged for. Someone paying their
+      // way one night at a time has no pass to deduct, so without this the
+      // attendance is the only trace the money ever existed.
+      paidCents: sql<number>`(
+        SELECT COALESCE(SUM(o.amountCents), 0) FROM pass_orders o
+         WHERE o.userId = ${attendance.userId}
+           AND o.sessionId = ${sessionId}
+           AND o.status = 'paid'
+      )`,
     })
     .from(attendance)
     .leftJoin(users, eq(attendance.userId, users.id))
@@ -3386,4 +3396,58 @@ function tuesdayOf(date: string): string {
   // getUTCDay: 0 Sunday … 2 Tuesday. Wednesday goes back one, Monday back six.
   const back = (d.getUTCDay() - WEEK_STARTS_ON_TUESDAY + 7) % 7;
   return addDays(date, -back);
+}
+
+
+/**
+ * Money taken at the door for a session being used that night.
+ *
+ * Deliberately not recordCashPayment. That one grants the sessions it charges
+ * for, which is right when somebody buys a pass and wrong here: a member
+ * paying their way one night at a time has already used what they paid for by
+ * the time it is typed in. Granting a session as well is how a member ends up
+ * holding one more than their payments account for — the exact state found on
+ * one account on 27 October 2026.
+ *
+ * So this records the order and attributes it to the rehearsal, and leaves
+ * every balance alone.
+ */
+export async function recordDoorPayment(data: {
+  userId: number;
+  sessionId: number;
+  amountCents: number;
+  passType: string;
+  paymentChannel: "cash" | "eft" | "card" | "other";
+  adminId: number;
+  notes?: string;
+}) {
+  if (!db) throw new Error("DB unavailable");
+
+  // A card payment taken on the reader is counted from Square's own API, so
+  // it is stored on that rail to keep it out of the cash total; everything
+  // else is only in this table and has to be counted from here.
+  const rail = data.paymentChannel === "card" ? "square" : "cash";
+
+  await db.insert(passOrders).values({
+    userId: data.userId,
+    stripeSessionId: null,
+    passType: data.passType,
+    sessionCount: 0, // nothing granted — the session was used on the night
+    amountCents: data.amountCents,
+    currency: "aud",
+    paymentMethod: rail,
+    paymentChannel: data.paymentChannel,
+    sessionId: data.sessionId,
+    notes: data.notes ?? null,
+    status: "paid",
+  });
+
+  await logActivity({
+    userId: data.userId,
+    actorId: data.adminId,
+    action: "cash_payment",
+    detail: `Paid at the door for this rehearsal: $${(data.amountCents / 100).toFixed(2)} (${data.paymentChannel}). No session granted — it was used on the night.`,
+  }).catch(() => {});
+
+  return { ok: true as const };
 }
