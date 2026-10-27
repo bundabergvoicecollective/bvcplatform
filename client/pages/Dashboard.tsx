@@ -108,6 +108,15 @@ function squareNoteLabel(note: string | null): string {
   return note;
 }
 
+/** What each way of paying is called on screen. */
+const CHANNEL_LABEL: Record<string, string> = {
+  cash: "Cash",
+  eft: "EFT / bank transfer",
+  card: "Card (Square reader)",
+  other: "Other",
+  complimentary: "Complimentary",
+};
+
 function IncomeWidget() {
   const utils = trpc.useUtils();
   const { data: income, isLoading } = trpc.dashboard.lastSessionIncome.useQuery();
@@ -115,15 +124,19 @@ function IncomeWidget() {
   const [showForm, setShowForm] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [passType, setPassType] = useState<string>("10-pass");
+  // Cash is what is handed over at the door most often, so it is the default
+  // and the common case stays one tap.
+  const [channel, setChannel] = useState<"cash" | "eft" | "card" | "other">("cash");
   const [notes, setNotes] = useState("");
 
   const recordCash = trpc.members.recordCashPayment.useMutation({
     onSuccess: () => {
-      toast.success("Cash payment recorded and pass assigned.");
+      toast.success(`${CHANNEL_LABEL[channel]} payment recorded and pass assigned.`);
       utils.dashboard.lastSessionIncome.invalidate();
       setShowForm(false);
       setSelectedUserId("");
       setPassType("10-pass");
+      setChannel("cash");
       setNotes("");
     },
     onError: (e) => toast.error(e.message),
@@ -161,7 +174,10 @@ function IncomeWidget() {
     ...income.cashOrders.map((o) => ({
       label: passTypeLabel(o.passType),
       amount: o.amountCents,
-      method: "Cash / EFTPOS",
+      // Rows written before the method was asked for carry no channel. They
+      // are labelled for what is actually known about them rather than being
+      // called cash, which half of them may not have been.
+      method: o.paymentChannel ? CHANNEL_LABEL[o.paymentChannel] ?? "Manual" : "Manual (method not recorded)",
       email: o.userEmail,
     })),
     ...income.compOrders.map((o) => ({
@@ -259,6 +275,27 @@ function IncomeWidget() {
               </Select>
             </div>
             <div className="space-y-2">
+              <Label className="text-xs" style={{ color: "oklch(0.35 0.04 240)" }}>How did they pay?</Label>
+              <Select value={channel} onValueChange={(v) => setChannel(v as typeof channel)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="eft">EFT / bank transfer</SelectItem>
+                  <SelectItem value="card">Card (Square reader)</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+              {channel === "card" && (
+                <p className="text-xs leading-snug" style={{ color: "oklch(0.52 0.03 240)" }}>
+                  Only for a card payment that did not come through automatically.
+                  Square reports its own takings, so this is kept out of the cash
+                  total to stop it being counted twice.
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
               <Label className="text-xs" style={{ color: "oklch(0.35 0.04 240)" }}>Notes (optional)</Label>
               <Input
                 className="h-8 text-sm"
@@ -275,6 +312,7 @@ function IncomeWidget() {
                 recordCash.mutate({
                   userId: Number(selectedUserId),
                   passType: passType as "10-pass" | "5-pass" | "single",
+                  paymentChannel: channel,
                   notes: notes || undefined,
                   // The rehearsal this tile is showing. Money counted on the
                   // night and typed in the next morning belongs to the night,

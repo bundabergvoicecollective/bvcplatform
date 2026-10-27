@@ -341,6 +341,9 @@ const coreRouter = router({
           userId: z.number(),
           passType: z.enum(["10-pass", "5-pass", "single", "10-pass-comp", "5-pass-comp", "single-comp", "custom-carryover"]),
           customSessionCount: z.number().int().min(0).max(100).optional(),
+          // How the money arrived. Optional so an older client keeps working;
+          // left out, it behaves exactly as before and records cash.
+          paymentChannel: z.enum(["cash", "eft", "card", "other"]).optional(),
           notes: z.string().optional(),
           // Which rehearsal the money was taken at. The form sends the one it
           // is showing; left out, recordCashPayment works it out from today.
@@ -353,6 +356,15 @@ const coreRouter = router({
         const sessionCount = input.passType === "custom-carryover"
           ? (input.customSessionCount ?? 1)
           : product.sessionCount;
+        // The rail and the channel answer different questions and must not be
+        // conflated. A card payment taken on the Square reader is counted from
+        // Square's own API, so recording it as "cash" here would count the same
+        // money twice — it goes in as "square" and is excluded from the cash
+        // total. A bank transfer is in nobody's API but ours, so it has to be
+        // counted from this table like cash, while still being reported as EFT.
+        const channel = isComp ? "complimentary" : (input.paymentChannel ?? "cash");
+        const rail = isComp ? "complimentary" : channel === "card" ? "square" : "cash";
+
         const result = await recordCashPayment({
           userId: input.userId,
           passType: input.passType,
@@ -360,7 +372,8 @@ const coreRouter = router({
           amountCents: product.amountCents,
           adminId: ctx.user.id,
           notes: input.notes,
-          paymentMethod: isComp ? "complimentary" : "cash",
+          paymentMethod: rail,
+          paymentChannel: channel,
           sessionId: input.sessionId,
         });
 

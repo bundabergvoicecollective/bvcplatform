@@ -44,7 +44,7 @@ on:
         required: false
         default: false
       args:
-        description: "Extra arguments, e.g. --email=x@y.com, --site=https://…, --date=2026-11-03T18:30"
+        description: "Extra arguments, e.g. --email=x@y.com, --amount=1600, --user=12, --site=https://…, --date=2026-11-03T18:30"
         type: string
         required: false
         default: ""
