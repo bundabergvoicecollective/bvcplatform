@@ -25,6 +25,7 @@ const args = process.argv.slice(2);
 const SHOW = args.includes("--show-emails");
 const emails = args.filter((a) => a.startsWith("--email=")).map((a) => a.slice(8).toLowerCase().trim());
 const amounts = args.filter((a) => a.startsWith("--amount=")).map((a) => Number(a.slice(9)));
+const userIds = args.filter((a) => a.startsWith("--user=")).map((a) => Number(a.slice(7)));
 
 const shown = (e: string | null) =>
   !e ? "(no address)" : SHOW ? e : e.replace(/^(.{2})[^@]*(@.*)$/, "$1…$2");
@@ -34,7 +35,13 @@ const initials = (n: string | null) =>
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  if (!emails.length && !amounts.length) throw new Error("Pass at least one --email= or --amount=.");
+  if (!emails.length && !amounts.length && !userIds.length) {
+    throw new Error("Pass at least one --email=, --amount= or --user=.");
+  }
+  // An amount search finds the member but prints only the order line, which
+  // never answers the question that follows it — was the pass granted? The
+  // ids it finds are carried into the per-member detail below.
+  const found = new Set<number>(userIds);
 
   const conn = await mysql.createConnection(url);
   const q = async <T>(sql: string, p: unknown[] = []): Promise<T> => (await conn.query(sql, p))[0] as T;
@@ -42,11 +49,11 @@ async function main() {
   if (amounts.length) {
     console.log(`Any paid order matching ${amounts.map((a) => `$${(a / 100).toFixed(2)}`).join(" or ")}, ever:\n`);
     const rows = await q<
-      { d: string; cents: number; method: string; passType: string; email: string | null; name: string | null; stripeSessionId: string | null }[]
+      { d: string; cents: number; method: string; passType: string; email: string | null; name: string | null; stripeSessionId: string | null; userId: number }[]
     >(
       `SELECT DATE_FORMAT(o.createdAt, '%Y-%m-%d %H:%i') AS d, o.amountCents AS cents,
               o.paymentMethod AS method, o.passType, o.stripeSessionId,
-              u.email, u.name
+              o.userId, u.email, u.name
          FROM pass_orders o LEFT JOIN users u ON u.id = o.userId
         WHERE o.status = 'paid' AND o.amountCents IN (${amounts.map(() => "?").join(",")})
         ORDER BY o.createdAt DESC`,
@@ -54,6 +61,7 @@ async function main() {
     );
     if (!rows.length) console.log("  none at all.");
     for (const r of rows) {
+      found.add(Number(r.userId));
       console.log(
         `  ${r.d} UTC  $${(Number(r.cents) / 100).toFixed(2).padStart(7)}  ${r.method.padEnd(13)} ${r.passType.padEnd(14)} ${initials(r.name).padEnd(6)} ${shown(r.email)}` +
           (r.stripeSessionId ? `  ref ${r.stripeSessionId.slice(0, 10)}…` : "  no payment ref"),
@@ -62,15 +70,26 @@ async function main() {
     console.log("");
   }
 
-  for (const email of emails) {
-    const [member] = await q<{ id: number; name: string | null; email: string }[]>(
-      "SELECT id, name, email FROM users WHERE lower(trim(email)) = ?",
-      [email],
-    );
-    if (!member) {
-      console.log(`${shown(email)} — no member with that address.\n`);
-      continue;
-    }
+  const byEmail = await Promise.all(
+    emails.map(async (email) => {
+      const [m] = await q<{ id: number; name: string | null; email: string }[]>(
+        "SELECT id, name, email FROM users WHERE lower(trim(email)) = ?",
+        [email],
+      );
+      if (!m) console.log(`${shown(email)} — no member with that address.\n`);
+      return m ?? null;
+    }),
+  );
+  for (const m of byEmail) if (m) found.add(m.id);
+
+  const members = found.size
+    ? await q<{ id: number; name: string | null; email: string }[]>(
+        `SELECT id, name, email FROM users WHERE id IN (${[...found].map(() => "?").join(",")})`,
+        [...found],
+      )
+    : [];
+
+  for (const member of members) {
     console.log(`${initials(member.name)}  ${shown(member.email)}`);
 
     const passes = await q<{ total: number; remaining: number; active: number; d: string }[]>(
