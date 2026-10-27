@@ -19,6 +19,9 @@ const SITE = (
   "https://members.bundabergvoicecollective.com.au"
 ).replace(/\/+$/, "");
 
+/** The first rehearsal marked through the live site; see the drift check. */
+const MARKED_LIVE_FROM = "2026-10-13";
+
 type Level = "critical" | "warn";
 const fails: { level: Level; what: string; detail: string }[] = [];
 let checks = 0;
@@ -211,6 +214,10 @@ async function main() {
     ok("passes", `${passes.active} active, ${passes.sessions} sessions outstanding`);
 
     // The thing most likely to bite tonight: a mark that does not deduct.
+    // Same floor as scripts/passDriftAudit.ts, and for the same reason: the
+    // 6 October import wrote its attendance already deducted, so a wider
+    // window flags 32 member-days of drift that is known, deliberate and
+    // not a fault.
     const drift = await q<{ userId: number; marks: number; deductions: number }[]>(
       `SELECT a.userId, count(*) AS marks,
               (SELECT count(*) FROM user_activity_log l
@@ -219,13 +226,14 @@ async function main() {
                   AND DATE(DATE_ADD(l.createdAt, INTERVAL 10 HOUR)) = DATE(DATE_ADD(a.markedAt, INTERVAL 10 HOUR))
               ) AS deductions
          FROM attendance a
-        WHERE a.attended = 1 AND a.passUsed = 1 AND a.markedAt >= DATE_SUB(now(), INTERVAL 21 DAY)
+        WHERE a.attended = 1 AND a.passUsed = 1 AND a.markedAt >= ?
         GROUP BY a.userId, DATE(DATE_ADD(a.markedAt, INTERVAL 10 HOUR))
        HAVING deductions < marks`,
+      [`${MARKED_LIVE_FROM} 00:00:00`],
     );
     drift.length
       ? bad("warn", "attendance vs passes", `${drift.length} member-day(s) marked present with no deduction logged — run the passdrift audit`)
-      : ok("attendance vs passes", "every mark in the last three weeks deducted correctly");
+      : ok("attendance vs passes", `every mark since ${MARKED_LIVE_FROM} deducted correctly`);
 
     // Does the schema the code expects actually exist? The sessionId column is
     // the newest, and cash recorded tonight depends on it.
@@ -258,31 +266,65 @@ async function main() {
       ? ok("upcoming events", upcoming.map((e) => `${e.title.slice(0, 24)} ${e.d} (${e.rsvps} yes)`).join("; "))
       : bad("warn", "upcoming events", "none in the diary");
 
-    // Can members actually open the music? One real file, through our proxy.
-    const [item] = await q<{ fileUrl: string; title: string }[]>(
-      "SELECT fileUrl, title FROM library_items WHERE fileUrl LIKE '/%' ORDER BY createdAt DESC LIMIT 1",
-    );
-    const [photo] = await q<{ imageUrl: string }[]>(
-      "SELECT imageUrl FROM gallery_posts WHERE status = 'approved' AND imageUrl LIKE '/%' ORDER BY createdAt DESC LIMIT 1",
-    );
+    // Can members actually open the music and see the photos? Every file,
+    // through our own proxy, the way a phone would ask for it. The bucket
+    // holding an object says nothing about whether the URL in the row
+    // resolves to it — the key the proxy presigns comes from the URL, not
+    // from fileKey, and the two can disagree.
+    const files: { url: string; key: string | null; label: string; level: Level }[] = [
+      ...(await q<{ url: string; key: string; title: string }[]>(
+        "SELECT fileUrl AS url, fileKey AS `key`, title FROM library_items ORDER BY createdAt DESC",
+      )).map((r) => ({ url: r.url, key: r.key, label: `music: ${r.title.slice(0, 40)}`, level: "critical" as Level })),
+      ...(await q<{ url: string; key: string; id: number }[]>(
+        "SELECT imageUrl AS url, imageKey AS `key`, id FROM gallery_posts WHERE status = 'approved' ORDER BY createdAt DESC",
+      )).map((r) => ({ url: r.url, key: r.key, label: `photo #${r.id}`, level: "warn" as Level })),
+    ];
     await conn.end();
 
-    for (const [url, label, level] of [
-      [item?.fileUrl, item ? `the newest music ("${item.title.slice(0, 28)}")` : "", "critical"],
-      [photo?.imageUrl, "the newest photo", "warn"],
-    ] as [string | undefined, string, Level][]) {
-      if (!url) { bad("warn", label || "a stored file", "nothing with a servable path to test"); continue; }
-      try {
-        // A range request: enough to prove the bytes are there without
-        // pulling a 20 MB PDF through the runner.
-        const { res } = await get(url, { headers: { range: "bytes=0-2047" } });
-        const bytes = (await res.arrayBuffer()).byteLength;
-        res.ok && bytes > 0
-          ? ok(`${label} downloads`, `${res.status}, ${bytes} bytes read`)
-          : bad(level, label, `HTTP ${res.status}, ${bytes} bytes — members cannot open it`);
-      } catch (err) {
-        bad(level, label, (err as Error).message);
-      }
+    /** What storageProxy.ts will presign: the path, decoded once by Express. */
+    function keyFromUrl(url: string): string | null {
+      const m = /^\/(?:manus-storage|r2-storage)\/(.+)$/.exec(url);
+      if (!m) return null;
+      try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+    }
+
+    const broken: { label: string; detail: string }[] = [];
+    let served = 0;
+    const queue = [...files];
+    await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        for (let f = queue.shift(); f; f = queue.shift()) {
+          if (!f.url.startsWith("/")) { broken.push({ label: f.label, detail: `points off-site at ${f.url.slice(0, 40)}` }); continue; }
+          try {
+            // A range request: enough to prove the bytes are there without
+            // pulling 110 PDFs and backing tracks through the runner.
+            const { res } = await get(f.url, { headers: { range: "bytes=0-1023" } });
+            const bytes = (await res.arrayBuffer()).byteLength;
+            if (res.ok && bytes > 0) { served++; continue; }
+            const asked = keyFromUrl(f.url);
+            const mismatch = asked !== null && f.key && asked !== f.key
+              ? ` — the URL asks for "${asked}" but the row stores the key "${f.key}"`
+              : "";
+            broken.push({ label: f.label, detail: `HTTP ${res.status}${mismatch}` });
+          } catch (err) {
+            broken.push({ label: f.label, detail: (err as Error).message });
+          }
+        }
+      }),
+    );
+
+    if (!files.length) {
+      bad("warn", "stored files", "nothing to check");
+    } else if (!broken.length) {
+      ok("every stored file opens", `${served} of ${files.length} music files and photos came back`);
+    } else {
+      const worst = files.find((f) => broken.some((b) => b.label === f.label))?.level ?? "critical";
+      bad(
+        worst,
+        `${broken.length} of ${files.length} stored files will not open`,
+        broken.slice(0, 4).map((b) => `${b.label} (${b.detail})`).join("; ") +
+          (broken.length > 4 ? `; and ${broken.length - 4} more` : ""),
+      );
     }
   }
 
