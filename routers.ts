@@ -1010,12 +1010,16 @@ const coreRouter = router({
         const buffer = Buffer.from(input.fileBase64, "base64");
         const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const fileKey = `library/${Date.now()}_${safeFileName}`;
-        const { url } = await storagePut(fileKey, buffer, input.mimeType ?? "application/octet-stream");
+        // storagePut appends a hash to the key before writing, so the object
+        // is at `storedKey`, not at `fileKey`. Store what it returns: the
+        // page serves the file by parsing the key back out of fileUrl, and a
+        // row where the two disagree points at nothing.
+        const { key: storedKey, url } = await storagePut(fileKey, buffer, input.mimeType ?? "application/octet-stream");
         const item = await createLibraryItem({
           title: input.title,
           artist: input.artist,
           type: input.type,
-          fileKey,
+          fileKey: storedKey,
           fileUrl: url,
           fileName: input.fileName,
           mimeType: input.mimeType,
@@ -1064,9 +1068,9 @@ const coreRouter = router({
         const buffer = Buffer.from(input.fileBase64, "base64");
         const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const fileKey = `library/${Date.now()}_${safeFileName}`;
-        const { url } = await storagePut(fileKey, buffer, input.mimeType ?? "application/octet-stream");
+        const { key: storedKey, url } = await storagePut(fileKey, buffer, input.mimeType ?? "application/octet-stream");
         return updateLibraryItem(input.id, {
-          fileKey,
+          fileKey: storedKey,
           fileUrl: url,
           fileName: input.fileName,
           mimeType: input.mimeType,
@@ -2277,8 +2281,8 @@ const shopRouter = router({
     .mutation(async ({ input }) => {
       const buffer = Buffer.from(input.fileBase64, "base64");
       const key = `shop-products/${input.productId}-${Date.now()}-${input.fileName}`;
-      const { url } = await storagePut(key, buffer, input.mimeType);
-      await updateShopProduct(input.productId, { imageKey: key, imageUrl: url });
+      const { key: storedKey, url } = await storagePut(key, buffer, input.mimeType);
+      await updateShopProduct(input.productId, { imageKey: storedKey, imageUrl: url });
       return { imageUrl: url };
     }),
 
@@ -2430,12 +2434,12 @@ export const appRouter = router({
         const buffer = Buffer.from(input.fileBase64, "base64");
         const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const key = `rehearsal-recordings/${input.sessionId}-${Date.now()}-${safeName}`;
-        const { url } = await storagePut(key, buffer, input.mimeType);
+        const { key: storedKey, url } = await storagePut(key, buffer, input.mimeType);
         const recording = await createRehearsalRecording({
           sessionId: input.sessionId,
           title: input.title,
           description: input.description,
-          fileKey: key,
+          fileKey: storedKey,
           fileUrl: url,
           durationSeconds: input.durationSeconds,
           uploadedBy: ctx.user.id,
@@ -2475,8 +2479,8 @@ export const appRouter = router({
             const buffer = Buffer.from(f.fileBase64, "base64");
             const ext = f.mimeType.split("/")[1] ?? "bin";
             const key = `gallery/${ctx.user.id}-${Date.now()}-${i}.${ext}`;
-            const { url } = await storagePut(key, buffer, f.mimeType);
-            return { url, key, mimeType: f.mimeType, sortOrder: i };
+            const { key: storedKey, url } = await storagePut(key, buffer, f.mimeType);
+            return { url, key: storedKey, mimeType: f.mimeType, sortOrder: i };
           })
         );
 

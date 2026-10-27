@@ -36,13 +36,15 @@ on:
           - recordpayment
           - emailprobe
           - passdrift
+          - preflight
+          - mediaurls
       apply:
-        description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
+        description: "Write the changes (manus, mediabackfill, manuscontent, gapfill and mediaurls only)"
         type: boolean
         required: false
         default: false
       args:
-        description: "Extra arguments (paymenttrace / recordpayment, e.g. --email=x@y.com --pass=5-pass)"
+        description: "Extra arguments (paymenttrace / recordpayment / preflight, e.g. --email=x@y.com or --site=https://…)"
         type: string
         required: false
         default: ""
@@ -276,6 +278,38 @@ jobs:
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
         run: pnpm exec tsx scripts/passDriftAudit.ts
+
+      # The URL in a media row and the key in the same row can name different
+      # objects, and the page is built from the URL while every audit asks the
+      # bucket about the key — so this breaks silently and audits clean. It is
+      # how all 110 library items and 12 photos came to 404 on 27 October.
+      # Reports unless `apply` is ticked; only ever rewrites a URL or a key.
+      - name: Repair media rows whose URL and key disagree
+        if: inputs.audit == 'mediaurls'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: bvc-storage
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/mediaUrlRepair.ts --apply
+          else
+            pnpm exec tsx scripts/mediaUrlRepair.ts
+          fi
+
+      # The whole-site check before a rehearsal: does the deployed app answer,
+      # does the API, do the stored files come back, and does a session row
+      # exist for tonight. Read-only — it signs nobody in and writes no row.
+      # It needs the live site, which the cloud sessions cannot reach, so it
+      # runs here.
+      - name: Pre-rehearsal check
+        if: inputs.audit == 'preflight'
+        env:
+          SITE: https://members.bundabergvoicecollective.com.au
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/preflight.ts $ARGS
 
       # Brings across what Manus recorded after the 29 September snapshot: the
       # rehearsals, their attendance, the pass orders and the balances.
