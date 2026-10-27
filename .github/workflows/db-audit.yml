@@ -1,12 +1,17 @@
-# Database audits and the Manus catch-up, run on demand.
+# Database and site audits, run on demand.
 #
 # The cloud container these sessions run in cannot reach the deployed site or
 # the database, so the admin diagnostics at /api/admin/email-check are only
 # reachable from a browser. This runs the same questions against the database
 # directly.
 #
-# Every audit is read-only. The one exception is `manus`, which still reports
-# by default and writes only when `apply` is ticked.
+# Most audits are read-only. The ones that can write — `mediaurls`,
+# `recordpayment`, `newrehearsal` — report by default and write only when
+# `apply` is ticked.
+#
+# The Manus migration steps were removed on 27 October 2026, once the cookie
+# that let them reach the old site was deleted. They are in the history if a
+# question about the migration ever needs answering.
 name: Database audit
 
 on:
@@ -22,16 +27,8 @@ on:
           - members
           - recency
           - schema
-          - manus
           - media
-          - mediabackfill
-          - manuscontent
-          - storageprobe
-          - memberdiff
-          - coverage
           - income
-          - procedures
-          - gapfill
           - paymenttrace
           - recordpayment
           - emailprobe
@@ -40,12 +37,12 @@ on:
           - mediaurls
           - newrehearsal
       apply:
-        description: "Write the changes (manus, mediabackfill, manuscontent, gapfill, mediaurls and newrehearsal only)"
+        description: "Write the changes (mediaurls, recordpayment and newrehearsal only)"
         type: boolean
         required: false
         default: false
       args:
-        description: "Extra arguments (paymenttrace / recordpayment / preflight, e.g. --email=x@y.com or --site=https://…)"
+        description: "Extra arguments, e.g. --email=x@y.com, --site=https://…, --date=2026-11-03T18:30"
         type: string
         required: false
         default: ""
@@ -119,122 +116,10 @@ jobs:
           R2_BUCKET_NAME: bvc-storage
         run: pnpm exec tsx scripts/mediaAudit.ts
 
-      # Copies the files the 29 September migration left behind: it brought
-      # the rows across and not the objects they point at, so every library
-      # item, photo and avatar is a path to something that is not in our
-      # bucket. Reports unless `apply` is ticked; with it, fetches each file
-      # from Manus and writes it under the key the row already uses, so no
-      # row has to change.
-      #
-      # MANUS_COOKIE is only needed if Manus will not serve its storage
-      # without a session. The dry run says so in as many words.
-      - name: Copy the media files Manus still holds
-        if: inputs.audit == 'mediabackfill'
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: bvc-storage
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-          APPLY: ${{ inputs.apply }}
-        run: |
-          if [ "$APPLY" = "true" ]; then
-            pnpm exec tsx scripts/mediaBackfill.ts --apply
-          else
-            pnpm exec tsx scripts/mediaBackfill.ts
-          fi
-
-      # The other half of the migration. The 29 September import covered
-      # rehearsals, attendance, orders, passes and members; it never touched
-      # content, so the library, performances, announcements and documents
-      # all stop dead on that date. This brings the missing rows across and
-      # the files behind them in the same pass.
-      #
-      # Needs MANUS_COOKIE: Manus will not hand over content, or serve the
-      # library and gallery files, without a signed-in session.
-      - name: Bring the Manus content across
-        if: inputs.audit == 'manuscontent'
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: bvc-storage
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-          APPLY: ${{ inputs.apply }}
-        run: |
-          if [ -z "$MANUS_COOKIE" ]; then
-            echo "::error::MANUS_COOKIE is not set. Sign in to the Manus admin, copy the Cookie header from any request in DevTools → Network, and save it as a repository secret."
-            exit 1
-          fi
-          if [ "$APPLY" = "true" ]; then
-            pnpm exec tsx scripts/manusContentSync.ts --apply
-          else
-            pnpm exec tsx scripts/manusContentSync.ts
-          fi
-
-      # Read-only, no writes anywhere. Tells a CloudFront signed-URL refusal
-      # apart from an object that was never there — S3 answers AccessDenied
-      # for both, and the two have completely different fixes.
-      - name: Probe how Manus serves its storage
-        if: inputs.audit == 'storageprobe'
-        env:
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-        run: pnpm exec tsx scripts/manusStoragePro.ts
-
-      # Who does Manus have that we do not? Read-only, writes nothing.
-      # Addresses masked and names cut to initials — the log is public.
-      - name: Compare the member lists
-        if: inputs.audit == 'memberdiff'
-        env:
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-        run: pnpm exec tsx scripts/memberDiff.ts
-
-      # Table by table: what does Manus hold, and what do we? Read-only.
-      # Counts only — the repository is public.
-      - name: Compare Manus against us, table by table
-        if: inputs.audit == 'coverage'
-        env:
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-        run: pnpm exec tsx scripts/manusCoverage.ts
-
-      # Why does the dashboard say $0.00 cash? Read-only, amounts and dates
-      # only.
       - name: Check what income is recorded
         if: inputs.audit == 'income'
         run: pnpm exec tsx scripts/incomeCheck.ts
 
-      # Reads Manus's public JavaScript to find out what its API is really
-      # called. No cookie needed — the bundle is served to anyone.
-      - name: Find out what Manus's procedures are called
-        if: inputs.audit == 'procedures'
-        env:
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-        run: pnpm exec tsx scripts/manusProcedures.ts
-
-      # The two gaps the coverage check found: RSVPs that never came across
-      # with their performances, and a live stream Manus has and we do not.
-      # Reports unless `apply` is ticked. Members are matched by email, never
-      # by Manus's user ids.
-      - name: Fill the gaps the coverage check found
-        if: inputs.audit == 'gapfill'
-        env:
-          MANUS_HOST: https://bundavoice-k8a8akbx.manus.space
-          MANUS_COOKIE: ${{ secrets.MANUS_COOKIE }}
-          APPLY: ${{ inputs.apply }}
-        run: |
-          if [ "$APPLY" = "true" ]; then
-            pnpm exec tsx scripts/manusGapFill.ts --apply
-          else
-            pnpm exec tsx scripts/manusGapFill.ts
-          fi
-
-      # Has a payment already been credited, and to whom? Read-only.
-      # Addresses masked; the log is public.
       - name: Trace a payment
         if: inputs.audit == 'paymenttrace'
         env:
@@ -331,55 +216,6 @@ jobs:
           ARGS: ${{ inputs.args }}
         run: pnpm exec tsx scripts/preflight.ts $ARGS
 
-      # Brings across what Manus recorded after the 29 September snapshot: the
-      # rehearsals, their attendance, the pass orders and the balances.
-      #
-      # The export is real member data and this repository is public, so it
-      # arrives as the MANUS_DELTA_B64 secret rather than a committed file or a
-      # dispatch input, both of which would be world-readable. The importer
-      # masks addresses in its output for the same reason.
-      #
-      # The secret may hold the export either as JSON or gzipped and base64'd —
-      # the name predates the first form. Both are accepted, because pasting
-      # 3.8 KB of base64 correctly is a worse thing to ask of someone than
-      # pasting the file they already have.
-      - name: Catch up from Manus
-        if: inputs.audit == 'manus'
-        env:
-          MANUS_DELTA_B64: ${{ secrets.MANUS_DELTA_B64 }}
-          # A `type: boolean` input reads as a boolean through `inputs` but as a
-          # string through `github.event.inputs`, so it is compared as text here
-          # rather than interpolated into the script.
-          APPLY: ${{ inputs.apply }}
-        run: |
-          if [ -z "$MANUS_DELTA_B64" ]; then
-            echo "::error::MANUS_DELTA_B64 is not set. Add the export as a repository secret first."
-            exit 1
-          fi
-          printf '%s' "$MANUS_DELTA_B64" > /tmp/delta.in
-          valid() { node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$1" 2>/dev/null; }
-
-          if valid /tmp/delta.in; then
-            echo "The secret holds the export as JSON."
-            cp /tmp/delta.in /tmp/manus-delta.json
-          elif tr -d '[:space:]' < /tmp/delta.in | base64 -di 2>/dev/null | gunzip > /tmp/manus-delta.json 2>/dev/null \
-               && valid /tmp/manus-delta.json; then
-            echo "The secret holds the export gzipped and base64 encoded."
-          else
-            # Enough to tell a truncated paste from a mangled one, with none of
-            # the content, which matters in a public log.
-            LEN=$(wc -c < /tmp/delta.in)
-            echo "::error::The secret is neither JSON nor gzipped base64. It holds $LEN characters; the export is 24453 as JSON or 3808 encoded. A truncated paste is the usual cause."
-            exit 1
-          fi
-          if [ "$APPLY" = "true" ]; then
-            pnpm exec tsx scripts/importManusDelta.ts --file=/tmp/manus-delta.json --apply
-          else
-            pnpm exec tsx scripts/importManusDelta.ts --file=/tmp/manus-delta.json
-          fi
-
-      # Report only — no --apply, so this never changes the schema. The deploy
-      # workflow is what applies it.
       - name: Report schema differences
         if: inputs.audit == 'schema'
         run: |

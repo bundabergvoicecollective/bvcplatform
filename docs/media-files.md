@@ -1,5 +1,12 @@
 # What is still in Manus
 
+> **Closed, 27 October 2026.** The migration is finished: every row and every
+> file came across, the `MANUS_COOKIE` secret has been deleted, and the Manus
+> steps and scripts named below were removed from `db-audit.yml` and
+> `scripts/`. They are in the git history if a question about how the
+> migration was done ever needs answering. This page is kept as the record of
+> what was moved and why, not as instructions to follow.
+
 Two gaps, easy to confuse, with different fixes. Both are covered here.
 
 | | what is missing | fix |
