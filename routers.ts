@@ -1139,7 +1139,8 @@ const coreRouter = router({
         if (!product) throw new TRPCError({ code: "BAD_REQUEST", message: "Unknown product" });
 
                 const referenceId = `pass-${ctx.user.id}-${input.passProductKey}-${Date.now()}`;
-        const squareLink = await createSquarePaymentLink({
+
+        const squareLink = await checkoutLink("pass", {
           name: product.name,
           amountCents: product.amountCents,
           currency: product.currency.toUpperCase(),
@@ -1912,7 +1913,7 @@ const liveStreamsRouter = router({
         : `Live Stream Access: ${stream.title}`;
 
             const streamRefId = `stream-${ctx.user.id}-${input.streamId}-${Date.now()}`;
-      const squareStreamLink = await createSquarePaymentLink({
+      const squareStreamLink = await checkoutLink("stream", {
         name: productName,
         amountCents: product.amountCents,
         currency: product.currency.toUpperCase(),
@@ -2356,7 +2357,7 @@ const shopRouter = router({
       }));
       const shopRefId = `shop-${ctx.user.id}-${Date.now()}`;
       const itemSummary = input.items.map((i) => i.productName).join(", ");
-      const squareShopLink = await createSquarePaymentLink({
+      const squareShopLink = await checkoutLink("shop", {
         name: itemSummary.length > 100 ? itemSummary.substring(0, 97) + "..." : itemSummary,
         amountCents: totalCents,
         currency: "AUD",
@@ -2380,6 +2381,40 @@ const shopRouter = router({
   // Admin: all orders
   adminOrders: adminProcedure.query(() => getAllShopOrders()),
 });
+
+
+/**
+ * A Square payment link, or a message a member can act on.
+ *
+ * Square's own errors must never reach a member. When the access token
+ * expired on 27 October 2026 the payments page showed them this, in full:
+ *
+ *   Status code: 401 Body: {"errors":[{"category":"AUTHENTICATION_ERROR",
+ *   "code":"UNAUTHORIZED","detail":"This request could not be authorized."}]}
+ *
+ * Somebody reading that has no idea whether they have been charged, whether
+ * it is their fault, or what to do next — and the one thing they most need to
+ * know is that their money is safe. The real error goes to the server log
+ * where it is useful; they get a sentence that tells them what to do.
+ */
+async function checkoutLink(
+  kind: "pass" | "stream" | "shop",
+  opts: Parameters<typeof createSquarePaymentLink>[0],
+) {
+  try {
+    return await createSquarePaymentLink(opts);
+  } catch (err) {
+    console.error(`[Checkout:${kind}] Square refused to create a payment link:`, err);
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message:
+        kind === "shop"
+          ? "Online payment is temporarily unavailable and you have not been charged. Please try again later."
+          : "Online payment is temporarily unavailable, and you have not been charged. " +
+            "Please pay at the next rehearsal and we will add your sessions — or try again later.",
+    });
+  }
+}
 
 export const appRouter = router({
   ...coreRouter._def.procedures,
