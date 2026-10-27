@@ -80,6 +80,7 @@ import {
   getEventRsvpList,
   deleteUser,
   getFinancialMembers,
+  getFinancials,
   getLastSessionStats,
   getSessionStats,
   createManualMember,
@@ -1093,6 +1094,11 @@ const coreRouter = router({
 
   // ─── Square Payments ────────────────────────────────────────────────────────
   payments: router({
+    /** Every payment, in Tuesday-to-Monday weeks. Admin only — it is the books. */
+    financials: adminProcedure
+      .input(z.object({ weeks: z.number().int().min(1).max(104).optional() }).optional())
+      .query(({ input }) => getFinancials({ weeks: input?.weeks })),
+
     products: publicProcedure.query(() =>
       Object.entries(PASS_PRODUCTS).map(([key, p]) => ({ key, ...p }))
     ),
