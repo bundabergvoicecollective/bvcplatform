@@ -83,12 +83,31 @@ async function main() {
 
   // Every pending order ever, because one stuck from tonight looks the same
   // as one stuck for a month until you count them.
-  const [stuck] = await q<{ n: number; oldest: string | null }[]>(
-    `SELECT count(*) AS n,
-            DATE_FORMAT(DATE_ADD(MIN(createdAt), INTERVAL 10 HOUR), '%Y-%m-%d') AS oldest
-       FROM pass_orders WHERE status = 'pending'`,
+  const allPending = await q<{
+    id: number; d: string; passType: string; cents: number; ref: string | null;
+    firstName: string | null; lastName: string | null; name: string | null;
+  }[]>(
+    `SELECT o.id, DATE_FORMAT(DATE_ADD(o.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d %H:%i') AS d,
+            o.passType, o.amountCents AS cents, o.stripeSessionId AS ref,
+            u.firstName, u.lastName, u.name
+       FROM pass_orders o LEFT JOIN users u ON u.id = o.userId
+      WHERE o.status = 'pending'
+      ORDER BY o.createdAt DESC`,
   );
-  console.log(`Pending orders in total: ${stuck.n}${stuck.oldest ? `, oldest ${stuck.oldest}` : ""}\n`);
+  console.log(`Every pending order, newest first — ${allPending.length} in total:`);
+  for (const o of allPending) {
+    console.log(
+      `  #${String(o.id).padEnd(8)} ${o.d}  ${o.passType.padEnd(16)} $${(Number(o.cents) / 100).toFixed(2).padStart(7)}` +
+      `  ${initials(o.firstName, o.lastName, o.name).padEnd(6)}` +
+      `${o.ref ? ` ref ${String(o.ref).slice(0, 14)}…` : "  NO SQUARE REF — sync cannot look this one up"}`,
+    );
+  }
+  const noRef = allPending.filter((o) => !o.ref).length;
+  if (noRef) {
+    console.log(`\n  ${noRef} of them carry no Square reference. syncPendingOrders only`);
+    console.log("  considers orders that have one, so those can never be resolved by Sync.");
+  }
+  console.log("");
 
   await conn.end();
 
@@ -108,6 +127,7 @@ async function main() {
         : SquareEnvironment.Production,
   });
 
+  let locationsOk = true;
   console.log(`Asking Square (${process.env.SQUARE_ENVIRONMENT || "production"}) whether our credentials still work:`);
   try {
     const res = await client.locations.get({ locationId });
@@ -118,16 +138,19 @@ async function main() {
     console.log(`  FAIL  Square refused: HTTP ${e.statusCode ?? "?"}`);
     for (const detail of e.errors ?? []) console.log(`        ${detail.code}: ${detail.detail}`);
     if (!e.errors?.length && e.message) console.log(`        ${e.message}`);
-    console.log("\n  This is why the purchase failed. The access token is wrong, expired or");
-    console.log("  revoked, or the location id does not belong to it. Nothing in the app");
-    console.log("  can work around that — it needs a fresh token in SQUARE_ACCESS_TOKEN.");
-    process.exit(1);
+    console.log("\n  That call needs MERCHANT_PROFILE_READ. A token scoped only for");
+    console.log("  checkout refuses it and still creates payment links perfectly well, so");
+    console.log("  this alone does NOT prove purchases are broken. --probe settles it.");
+    locationsOk = false;
   }
 
   if (!PROBE) {
-    console.log("\n  Credentials are good. Re-run with --probe to create one real payment");
-    console.log("  link and prove the exact call the checkout makes. No money moves.");
-    process.exit(0);
+    console.log(
+      locationsOk
+        ? "\n  Re-run with --probe to create one real payment link and prove the exact\n  call the checkout makes. No money moves."
+        : "\n  Re-run with --probe to find out whether checkout itself still works.",
+    );
+    process.exit(locationsOk ? 0 : 1);
   }
 
   console.log("\nCreating one payment link, the same call the checkout makes:");
@@ -143,9 +166,20 @@ async function main() {
       paymentNote: "audit probe — not a real purchase",
     });
     const link = (res as { paymentLink?: { url?: string; orderId?: string } }).paymentLink;
-    console.log(link?.url ? `  ok    Square returned a link (order ${link.orderId}).` : "  FAIL  Square returned no link.");
-    console.log("        Nobody was charged. The link can be left to expire.");
-    if (!link?.url) process.exit(1);
+    if (link?.url) {
+      console.log(`  ok    Square returned a link (order ${link.orderId}).`);
+      console.log("        Nobody was charged. The link can be left to expire.");
+      console.log(
+        locationsOk
+          ? "\n  Checkout works. A purchase failing is not Square refusing us."
+          : "\n  Checkout works despite the 401 above, so the token is simply scoped\n" +
+            "  for payments and not for reading the merchant profile. Purchases are\n" +
+            "  NOT broken by that — look elsewhere for why one failed.",
+      );
+    } else {
+      console.log("  FAIL  Square returned no link.");
+      process.exit(1);
+    }
   } catch (err) {
     const e = err as { statusCode?: number; errors?: { code?: string; detail?: string }[]; message?: string };
     console.log(`  FAIL  HTTP ${e.statusCode ?? "?"}`);
