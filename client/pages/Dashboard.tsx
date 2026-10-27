@@ -164,12 +164,17 @@ function IncomeWidget() {
     );
   }
 
-  const allPayments: { label: string; amount: number; method: string; email?: string | null }[] = [
+  // Who, by name. This list used to lead with the email address, so a member
+  // whose address happens to start with a username appeared on the dashboard
+  // as that username — which is how "meakin1" came to be showing instead of
+  // a member's name. Square payments carry no member link, only the address
+  // the buyer typed, so those still show it.
+  const allPayments: { label: string; amount: number; method: string; who?: string | null }[] = [
     ...income.squarePayments.map((p) => ({
       label: squareNoteLabel(p.note),
       amount: p.amountCents,
       method: p.sourceType === "CASH" ? "Cash (Square)" : "Square",
-      email: p.buyerEmail,
+      who: p.buyerEmail,
     })),
     ...income.cashOrders.map((o) => ({
       label: passTypeLabel(o.passType),
@@ -178,13 +183,19 @@ function IncomeWidget() {
       // are labelled for what is actually known about them rather than being
       // called cash, which half of them may not have been.
       method: o.paymentChannel ? CHANNEL_LABEL[o.paymentChannel] ?? "Manual" : "Manual (method not recorded)",
-      email: o.userEmail,
+      who: getDisplayName(
+        { firstName: o.userFirstName, lastName: o.userLastName, name: o.userName, email: o.userEmail },
+        "Unknown member",
+      ),
     })),
     ...income.compOrders.map((o) => ({
       label: passTypeLabel(o.passType) + " (Comp)",
       amount: 0,
       method: "Complimentary",
-      email: o.userEmail,
+      who: getDisplayName(
+        { firstName: o.userFirstName, lastName: o.userLastName, name: o.userName, email: o.userEmail },
+        "Unknown member",
+      ),
     })),
   ];
 
@@ -355,9 +366,9 @@ function IncomeWidget() {
                       {p.method}
                     </span>
                     <span className="truncate" style={{ color: "oklch(0.35 0.04 240)" }}>
-                      {p.email ?? p.label}
+                      {p.who ?? p.label}
                     </span>
-                    {p.email && (
+                    {p.who && (
                       <span className="text-xs truncate" style={{ color: "oklch(0.60 0.03 240)" }}>
                         {p.label}
                       </span>
@@ -903,7 +914,7 @@ function MemberDashboard() {
     <div className="space-y-6 animate-slide-up">
       <div>
         <h1 className="font-display text-2xl font-bold" style={{ color: "oklch(0.22 0.07 240)" }}>
-          Welcome back, {user?.name?.split(" ")[0] ?? "Singer"}!
+          Welcome back, {user ? getDisplayName(user, "Singer").split(" ")[0] : "Singer"}!
         </h1>
         <p className="text-sm mt-1" style={{ color: "oklch(0.52 0.03 240)" }}>
           Here's your Bundaberg Voice Collective summary.
