@@ -52,7 +52,19 @@ async function main() {
     process.exit(0);
   }
   if (res.status === 401 || res.status === 403) {
-    throw new Error(`Resend refused the key (HTTP ${res.status}). SMTP_PASS is not a valid API key for this account.`);
+    // Resend says which of the two it is, and they have different fixes: a
+    // key that is wrong, or a sending-only key that cannot read. Their error
+    // body names neither the key nor any address, so it is safe to print.
+    const why = await res.text().catch(() => "");
+    console.log(`Resend refused the key (HTTP ${res.status}).`);
+    if (why) console.log(`Its reason: ${why.slice(0, 300)}`);
+    console.log(
+      "\nA Resend key is either Full access or Sending access. Sending-access keys\n" +
+      "can post a message and cannot read one back, which is what this needs. If\n" +
+      "that is the reason, the fix is a second Full-access key — not a change to\n" +
+      "SMTP_PASS, which is doing its job.",
+    );
+    process.exit(1);
   }
   if (!res.ok) throw new Error(`Resend answered HTTP ${res.status}.`);
 
