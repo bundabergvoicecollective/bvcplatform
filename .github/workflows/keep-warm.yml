@@ -1,0 +1,54 @@
+# Keep the members site warm during the hours anyone uses it.
+#
+# Cloud Run runs at min-instances=0, so the first request after an idle spell
+# pays a cold start — measured at 19.8 seconds on 27 October. Safari in a tab
+# waits that out and shows a spinner. An app launched from the iOS home screen
+# is far less patient, and a member who taps the icon and gets a blank screen
+# does not try again, they just conclude it is broken.
+#
+# min-instances=1 would fix it outright and is the thing we are avoiding: it
+# bills for an idle container around the clock. A request every ten minutes
+# keeps a container alive for the next member instead. Cloud Run's default
+# request-based billing charges for time spent serving requests, not for the
+# idle minutes in between, so a HEAD that returns in milliseconds costs
+# essentially nothing — and GitHub Actions is free on a public repository.
+#
+# Only GET/HEAD. Nothing here changes anything.
+name: Keep warm
+
+on:
+  schedule:
+    # Every ten minutes from 6am to 10pm Brisbane (UTC+10), which is
+    # 20:00–11:59 UTC. Outside those hours a cold start costs nobody anything.
+    - cron: "*/10 20-23 * * *"
+    - cron: "*/10 0-11 * * *"
+  workflow_dispatch:
+
+# A queued run is worthless once the next one is due.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Wake the members site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping
+        run: |
+          set -u
+          URL=https://members.bundabergvoicecollective.com.au/
+          start=$(date +%s%3N)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -m 60 -L "$URL" || echo 000)
+          ms=$(( $(date +%s%3N) - start ))
+
+          echo "$URL -> $code in ${ms}ms"
+
+          # Not a failure condition: this runs every ten minutes and a red tick
+          # every time Cloudflare hiccups would train everyone to ignore it.
+          # Site health is the workflow that shouts; this one only reports.
+          if [ "$code" != "200" ]; then
+            echo "::warning::Ping returned $code — see the Site health workflow if this persists."
+          elif [ "$ms" -gt 10000 ]; then
+            echo "::warning::Took ${ms}ms, so it was cold. The gap between pings may be too long."
+          fi
