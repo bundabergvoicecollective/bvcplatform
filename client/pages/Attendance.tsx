@@ -159,27 +159,75 @@ function SessionRow({
   const utils = trpc.useUtils();
 
   const { data: members } = trpc.members.list.useQuery(undefined, { enabled: expanded });
+  // Two admins mark the roll from two phones on the same account, so the list
+  // has to move on its own. There is no socket here — Cloud Run runs at
+  // min-instances=0 behind a Worker — so it polls while the session is open
+  // and stops the moment it is collapsed.
+  const LIVE = { enabled: expanded, refetchInterval: expanded ? 3000 : false, refetchOnWindowFocus: true } as const;
   const { data: attendanceData, refetch } = trpc.attendance.forSession.useQuery(
     { sessionId: session.id },
-    { enabled: expanded }
+    LIVE,
   );
   const { data: stats, refetch: refetchStats } = trpc.attendance.sessionStats.useQuery(
     { sessionId: session.id },
-    { enabled: expanded }
+    LIVE,
   );
 
   const mark = trpc.attendance.mark.useMutation({
-    onSuccess: (_data, variables) => {
+    // The tick moves now, not when Singapore answers. The write is a
+    // transaction against a database in another country behind a cold-startable
+    // container; waiting for it before showing anything is what made marking a
+    // roll of seventy feel broken.
+    onMutate: async (variables) => {
+      const key = { sessionId: session.id };
+      await utils.attendance.forSession.cancel(key);
+      const previous = utils.attendance.forSession.getData(key);
+
+      utils.attendance.forSession.setData(key, (old) => {
+        const rows = old ? [...old] : [];
+        const i = rows.findIndex((r) => r.userId === variables.userId);
+        // The server decides the real sessionType — whether a pass covers it
+        // depends on a balance only it can read — so the guess here is only
+        // ever on screen for the length of one round trip.
+        const guess = variables.complimentary ? "complimentary" as const : "pass" as const;
+        if (i === -1) {
+          const member = members?.find((m) => m.id === variables.userId);
+          rows.push({
+            id: -Date.now(),
+            sessionId: session.id,
+            userId: variables.userId,
+            attended: variables.attended,
+            passUsed: false,
+            sessionType: guess,
+            markedAt: new Date(),
+            userName: member?.name ?? null,
+            userFirstName: member?.firstName ?? null,
+            userLastName: member?.lastName ?? null,
+            userEmail: member?.email ?? null,
+          });
+        } else {
+          rows[i] = { ...rows[i], attended: variables.attended, sessionType: guess };
+        }
+        return rows;
+      });
+
+      return { previous };
+    },
+    onError: (e, _variables, context) => {
+      // Put the tick back. A checkbox that stays on after a failed write is
+      // worse than one that never moved — the roll would look complete.
+      if (context?.previous) utils.attendance.forSession.setData({ sessionId: session.id }, context.previous);
+      toast.error(e.message);
+    },
+    onSettled: (_data, _error, variables) => {
+      // Reconcile against what actually landed, whichever way it went.
       refetch();
       refetchStats();
       utils.dashboard.adminStats.invalidate();
       utils.attendance.lastSessionStats.invalidate();
-      // Refresh the pass balance for the member that was just marked
       utils.passes.activeForUser.invalidate({ userId: variables.userId });
-      // Keep Members tab in sync so pass balances update there too
       utils.members.list.invalidate();
     },
-    onError: (e) => toast.error(e.message),
   });
 
   const deleteSession = trpc.sessions.delete.useMutation({
@@ -323,7 +371,6 @@ function SessionRow({
                       sessionId={session.id}
                       attended={attended}
                       sessionType={sessionType as "pass" | "single" | "complimentary" | null}
-                      isPending={mark.isPending}
                       onMark={(attended, complimentary) =>
                         mark.mutate({ sessionId: session.id, userId: member.id, attended, complimentary })
                       }
@@ -470,14 +517,12 @@ function MemberAttendanceRow({
   sessionId: _sessionId,
   attended,
   sessionType,
-  isPending,
   onMark,
 }: {
   member: { id: number; name: string | null; firstName?: string | null; lastName?: string | null; email: string | null };
   sessionId: number;
   attended: boolean;
   sessionType: "pass" | "single" | "complimentary" | null;
-  isPending: boolean;
   onMark: (attended: boolean, complimentary: boolean) => void;
 }) {
   const utils = trpc.useUtils();
@@ -587,7 +632,7 @@ function MemberAttendanceRow({
                 <div>
                   <Switch
                     checked={isComplimentary}
-                    disabled={isPending || !attended}
+                    disabled={!attended}
                     onCheckedChange={(checked) => onMark(true, checked)}
                     className="data-[state=checked]:bg-emerald-500 scale-90"
                   />
@@ -608,7 +653,12 @@ function MemberAttendanceRow({
         <div className="flex justify-center pr-2">
           <Checkbox
             checked={attended}
-            disabled={isPending}
+            // Deliberately never disabled while a write is in flight. This was
+            // gated on the one mutation shared by every row, so marking one
+            // person locked all seventy checkboxes until the server answered —
+            // the roll could only be marked as fast as the slowest round trip.
+            // The tick is optimistic now and each write is independent, so
+            // marking runs at the speed of tapping.
             onCheckedChange={(checked) => onMark(!!checked, isComplimentary && !!checked)}
             className="data-[state=checked]:bg-teal-600 data-[state=checked]:border-teal-600"
           />
