@@ -654,13 +654,16 @@ async function grantFromUnattributedPayment(payment: Record<string, unknown>): P
 
       const safeFileName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
       const fileKey = `library/${Date.now()}_${safeFileName}`;
-      const { url } = await storagePut(fileKey, file.buffer, file.mimetype);
+      // The object lands at the key storagePut returns, not the one passed
+      // in — it appends a hash. Store that one, or fileUrl and fileKey part
+      // company and the file stops being servable.
+      const { key: storedKey, url } = await storagePut(fileKey, file.buffer, file.mimetype);
 
       const item = await createLibraryItem({
         title,
         artist: artist || undefined,
         type: type as "sheet_music" | "backing_track",
-        fileKey,
+        fileKey: storedKey,
         fileUrl: url,
         fileName: file.originalname,
         mimeType: file.mimetype,

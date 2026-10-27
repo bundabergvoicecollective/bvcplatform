@@ -37,8 +37,9 @@ on:
           - emailprobe
           - passdrift
           - preflight
+          - mediaurls
       apply:
-        description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
+        description: "Write the changes (manus, mediabackfill, manuscontent, gapfill and mediaurls only)"
         type: boolean
         required: false
         default: false
@@ -277,6 +278,26 @@ jobs:
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
         run: pnpm exec tsx scripts/passDriftAudit.ts
+
+      # The URL in a media row and the key in the same row can name different
+      # objects, and the page is built from the URL while every audit asks the
+      # bucket about the key — so this breaks silently and audits clean. It is
+      # how all 110 library items and 12 photos came to 404 on 27 October.
+      # Reports unless `apply` is ticked; only ever rewrites a URL or a key.
+      - name: Repair media rows whose URL and key disagree
+        if: inputs.audit == 'mediaurls'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: bvc-storage
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/mediaUrlRepair.ts --apply
+          else
+            pnpm exec tsx scripts/mediaUrlRepair.ts
+          fi
 
       # The whole-site check before a rehearsal: does the deployed app answer,
       # does the API, do the stored files come back, and does a session row
