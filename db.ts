@@ -890,21 +890,44 @@ export async function notifyAllMembers(data: {
   title: string;
   message: string;
   excludeUserId?: number;
+  /** Where tapping the notification should land. Defaults to the home page. */
+  url?: string;
 }) {
   if (!db) return;
   try {
     const allUsers = await db.select({ id: users.id }).from(users);
-    const rows = allUsers
-      .filter((u) => u.id !== data.excludeUserId)
-      .map((u) => ({
-        userId: u.id,
-        type: data.type,
-        title: data.title,
-        message: data.message,
-        read: false,
-      }));
+    const recipients = allUsers.filter((u) => u.id !== data.excludeUserId).map((u) => u.id);
+    const rows = recipients.map((userId) => ({
+      userId,
+      type: data.type,
+      title: data.title,
+      message: data.message,
+      read: false,
+    }));
     if (rows.length > 0) {
       await db.insert(notifications).values(rows);
+    }
+
+    // Every in-app notification is also a push. This used to be wired to
+    // announcements alone, so new music, documents and performances appeared
+    // in the bell and nowhere else — a member had to already be in the app to
+    // learn that something had happened in the app.
+    //
+    // Imported here rather than at the top because webPush imports this
+    // module, and loading it eagerly would close the circle.
+    //
+    // Deliberately not awaited: a push that is slow or failing must never
+    // hold up the thing that caused it.
+    if (recipients.length) {
+      void import("./webPush")
+        .then(({ sendPushToUsers }) =>
+          sendPushToUsers(recipients, {
+            title: data.title,
+            body: data.message.length > 140 ? `${data.message.slice(0, 140)}…` : data.message,
+            url: data.url ?? "/",
+          }),
+        )
+        .catch((err) => console.error("[notifyAllMembers] push failed:", err));
     }
   } catch (err) {
     console.error("[notifyAllMembers] failed:", err);

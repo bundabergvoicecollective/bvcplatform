@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
+import { registerServiceWorker } from "./lib/registerServiceWorker";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -51,6 +52,10 @@ const trpcClient = trpc.createClient({
     }),
   ],
 });
+
+// For everybody, not only the people who find the Notifications page. Without
+// a worker there is no push and no home-screen badge, whatever they agreed to.
+registerServiceWorker();
 
 createRoot(document.getElementById("root")!).render(
   <trpc.Provider client={trpcClient} queryClient={queryClient}>

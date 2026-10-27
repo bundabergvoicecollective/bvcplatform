@@ -161,7 +161,7 @@ import { storagePrepareUpload, storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { PASS_PRODUCTS, PassProductKey } from "./products";
 import { sendOnlinePassReceipt, shouldIssueOnlinePassReceipt } from "./passReceipt";
-import { savePushSubscription, deletePushSubscription, sendPushToAll } from "./webPush";
+import { savePushSubscription, deletePushSubscription } from "./webPush";
 
 // Square is used for payments (see server/_core/square.ts)
 
@@ -983,13 +983,8 @@ const coreRouter = router({
           title: `New announcement: ${input.title}`,
           message: input.body.length > 120 ? input.body.slice(0, 120) + "…" : input.body,
           excludeUserId: ctx.user.id,
-        });
-        // Send Web Push to all subscribed Android/PWA users
-        sendPushToAll({
-          title: `BVC: ${input.title}`,
-          body: input.body.length > 100 ? input.body.slice(0, 100) + "…" : input.body,
           url: "/announcements",
-        }).catch((e) => console.error("[WebPush] Broadcast error:", e));
+        });
         return announcement;
       }),
     update: adminProcedure
@@ -1073,6 +1068,7 @@ const coreRouter = router({
           title: `New music added: ${input.title}`,
           message: `${input.type === "sheet_music" ? "Sheet music" : "Backing track"}${input.artist ? ` by ${input.artist}` : ""} has been added to the music library.`,
           excludeUserId: ctx.user.id,
+          url: "/library",
         });
         return item;
       }),
@@ -1603,6 +1599,7 @@ const eventsRouter = router({
         title: `New event: ${input.title}`,
         message: `${input.category === "concert" ? "Performance" : input.category === "rehearsal" ? "Rehearsal" : "Event"} on ${dateStr}${input.location ? ` at ${input.location}` : ""}.`,
         excludeUserId: ctx.user.id,
+        url: "/events",
       });
       return event;
     }),
@@ -1995,6 +1992,7 @@ const documentsRouter = router({
           ? input.description.length > 120 ? input.description.slice(0, 120) + "…" : input.description
           : `A new document has been added to Forms & Documents.`,
         excludeUserId: ctx.user.id,
+        url: "/documents",
       });
       return doc;
     }),

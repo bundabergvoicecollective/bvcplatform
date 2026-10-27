@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { isIOS, isInstalled } from "@/lib/registerServiceWorker";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -15,6 +16,8 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 
 export function usePushNotifications() {
   const [supported, setSupported] = useState(false);
+  /** iPhone or iPad that has not been added to the home screen yet. */
+  const [needsInstall, setNeedsInstall] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>("default");
   const [subscribed, setSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,6 +32,10 @@ export function usePushNotifications() {
       "PushManager" in window &&
       "Notification" in window;
     setSupported(isSupported);
+    // Safari exposes none of the push API in a normal tab, so on an iPhone an
+    // unsupported result usually means "not installed yet" rather than "never
+    // going to work" — and that has a fix the member can follow.
+    setNeedsInstall(isIOS() && !isInstalled());
     if (isSupported) {
       setPermission(Notification.permission);
       // Check if already subscribed
@@ -40,16 +47,15 @@ export function usePushNotifications() {
     }
   }, []);
 
-  // Register service worker on mount
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("[SW] Registration failed:", err);
-      });
-    }
-  }, []);
+  // Registration moved to client/lib/registerServiceWorker.ts, called at app
+  // start. Doing it here meant anyone who never opened this page had no
+  // worker, so push could not reach them and the badge never moved.
 
   const subscribe = async () => {
+    if (needsInstall) {
+      toast.error("Add BVC to your Home Screen first — then open it from there.");
+      return;
+    }
     if (!supported || !vapidKey) return;
     setLoading(true);
     try {
@@ -98,5 +104,5 @@ export function usePushNotifications() {
     }
   };
 
-  return { supported, permission, subscribed, loading, subscribe, unsubscribe };
+  return { supported, permission, subscribed, loading, needsInstall, subscribe, unsubscribe };
 }
