@@ -36,13 +36,14 @@ on:
           - recordpayment
           - emailprobe
           - passdrift
+          - preflight
       apply:
         description: "Write the changes (manus, mediabackfill, manuscontent and gapfill only)"
         type: boolean
         required: false
         default: false
       args:
-        description: "Extra arguments (paymenttrace / recordpayment, e.g. --email=x@y.com --pass=5-pass)"
+        description: "Extra arguments (paymenttrace / recordpayment / preflight, e.g. --email=x@y.com or --site=https://…)"
         type: string
         required: false
         default: ""
@@ -276,6 +277,18 @@ jobs:
       - name: Check attendance against pass deductions
         if: inputs.audit == 'passdrift'
         run: pnpm exec tsx scripts/passDriftAudit.ts
+
+      # The whole-site check before a rehearsal: does the deployed app answer,
+      # does the API, do the stored files come back, and does a session row
+      # exist for tonight. Read-only — it signs nobody in and writes no row.
+      # It needs the live site, which the cloud sessions cannot reach, so it
+      # runs here.
+      - name: Pre-rehearsal check
+        if: inputs.audit == 'preflight'
+        env:
+          SITE: https://members.bundabergvoicecollective.com.au
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/preflight.ts $ARGS
 
       # Brings across what Manus recorded after the 29 September snapshot: the
       # rehearsals, their attendance, the pass orders and the balances.
