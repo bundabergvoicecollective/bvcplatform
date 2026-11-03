@@ -44,8 +44,9 @@ on:
           - attendancesweep
           - checkout
           - clearpending
+          - annotatepass
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance and clearpending only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending and annotatepass only)"
         type: boolean
         required: false
         default: false
@@ -256,6 +257,25 @@ jobs:
             pnpm exec tsx scripts/doorPayments.ts $ARGS --apply
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
+          fi
+
+      # Writes down why a pass exists. A balance with nothing behind it looks
+      # the same as money gone missing until somebody who was there confirms
+      # it was a gift, and that confirmation is worth keeping.
+      - name: Annotate a pass
+        if: inputs.audit == 'annotatepass'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass --user=<id> --note=the reason (the note runs to the next flag)"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/annotatePass.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/annotatePass.ts $ARGS
           fi
 
       # Closes out pending pass orders settled some other way. Marks them
