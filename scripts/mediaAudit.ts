@@ -1,6 +1,6 @@
 /**
- * Read-only: do the files behind avatars, library items, gallery posts and
- * event images actually live in OUR bucket?
+ * Read-only: do the files behind avatars, library items, gallery posts, event
+ * images and shop products actually live in OUR bucket?
  *
  * Every one of those rows carries a URL, and most carry a storage key. The
  * 29 September import copied rows; whether it copied the objects they point
@@ -22,7 +22,7 @@
  *        R2_SECRET_ACCESS_KEY=... R2_BUCKET_NAME=...] tsx scripts/mediaAudit.ts
  */
 import mysql from "mysql2/promise";
-import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 
 /** table → the column holding the URL, and the one holding the storage key */
 const MEDIA: [table: string, urlColumn: string, keyColumn: string | null, label: string][] = [
@@ -33,6 +33,10 @@ const MEDIA: [table: string, urlColumn: string, keyColumn: string | null, label:
   ["events", "imageUrl", "imageKey", "performances (images)"],
   ["rehearsal_recordings", "fileUrl", "fileKey", "rehearsal recordings"],
   ["documents", "fileUrl", "fileKey", "documents"],
+  // Shop products were missing from this list, so the one place a broken
+  // image is in front of somebody being asked for money was the one place
+  // nothing checked. Two of them had been dead for a fortnight.
+  ["shop_products", "imageUrl", "imageKey", "shop product images"],
 ];
 
 /** Everything before the first single slash, so a host can be seen at a glance. */
@@ -173,6 +177,73 @@ async function main() {
           ` — ${verdict}`,
       );
       if (firstMissing) console.log(`  ${"".padEnd(24)}      missing keys look like: ${firstMissing}`);
+    }
+  }
+
+  // Shop products get named, not merely counted. A missing picture here is on
+  // a product people are asked to buy, and the only useful form of that
+  // finding is WHICH product: somebody has to upload the picture again, and a
+  // count tells them nothing about what to look for. Names of things for sale
+  // are not member data, so they are safe in a public log.
+  if (r2) {
+    const products = await query<{ id: number; name: string; u: string | null; k: string | null }[]>(
+      "SELECT id, name, imageUrl AS u, imageKey AS k FROM shop_products\n" +
+        "        WHERE imageUrl IS NOT NULL AND imageUrl <> ''",
+    );
+    const broken: { id: number; name: string; key: string }[] = [];
+    for (const prod of products) {
+      const key = keyFromUrl(prod.u, prod.k);
+      if (!key) continue;
+      const { missing } = await countPresent(r2, [key]);
+      if (missing) broken.push({ id: prod.id, name: prod.name, key });
+    }
+    if (broken.length) {
+      console.log(`\n${broken.length} shop product(s) have a picture that is not in the bucket:`);
+      for (const b of broken) {
+        console.log(`  #${b.id}  ${b.name}`);
+        console.log(`      points at: ${b.key}`);
+      }
+
+      // Before anyone is sent looking for the original: is the file in the
+      // bucket under a NEARLY identical name? That is what killed 122 media
+      // links a fortnight ago — a key holding a space where the object held
+      // %20, so every HEAD missed a file that was sitting right there. A row
+      // rewrite fixes that; an upload is only needed if the object is
+      // genuinely absent, and the two are indistinguishable without looking.
+      const prefixes = [...new Set(broken.map((b) => b.key.replace(/[^/]+$/, "")))];
+      for (const prefix of prefixes) {
+        console.log(`\nWhat is actually in the bucket under ${prefix || "(root)"}:`);
+        try {
+          const listed = await r2.s3.send(
+            new ListObjectsV2Command({ Bucket: r2.bucket, Prefix: prefix, MaxKeys: 50 }),
+          );
+          const keys = (listed.Contents ?? []).map((o) => o.Key ?? "");
+          if (!keys.length) {
+            console.log("  nothing at all — the whole prefix is empty.");
+          } else {
+            for (const k of keys) console.log(`  ${k}`);
+            // A name that differs only in how a space is written is the whole
+            // point of printing this, so say so rather than leaving it to the
+            // reader to spot.
+            const loose = (v: string) => v.replace(/%20|\+|\s/g, "").toLowerCase();
+            for (const b of broken.filter((x) => x.key.startsWith(prefix))) {
+              const near = keys.find((k) => k !== b.key && loose(k) === loose(b.key));
+              if (near) {
+                console.log(`\n  #${b.id} is a NAME MISMATCH, not a missing file:`);
+                console.log(`    row says:   ${b.key}`);
+                console.log(`    bucket has: ${near}`);
+                console.log("    Repairable by rewriting the row — no upload needed.");
+              }
+            }
+          }
+        } catch (err) {
+          console.log(`  could not list: ${(err as Error).message.slice(0, 80)}`);
+        }
+      }
+
+      console.log("\nWhere no near-match is listed above, the object really is gone and nothing");
+      console.log("here can put it back: the picture has to be uploaded again from wherever the");
+      console.log("original is. Admin panel → Shop → edit the product → choose a new image.");
     }
   }
 
