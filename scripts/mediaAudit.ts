@@ -22,7 +22,7 @@
  *        R2_SECRET_ACCESS_KEY=... R2_BUCKET_NAME=...] tsx scripts/mediaAudit.ts
  */
 import mysql from "mysql2/promise";
-import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 
 /** table → the column holding the URL, and the one holding the storage key */
 const MEDIA: [table: string, urlColumn: string, keyColumn: string | null, label: string][] = [
@@ -203,9 +203,47 @@ async function main() {
         console.log(`  #${b.id}  ${b.name}`);
         console.log(`      points at: ${b.key}`);
       }
-      console.log("\nThe file itself is gone, so nothing here can put it back — the picture has");
-      console.log("to be uploaded again from wherever the original is. Admin panel → Shop →");
-      console.log("edit the product → choose a new image.");
+
+      // Before anyone is sent looking for the original: is the file in the
+      // bucket under a NEARLY identical name? That is what killed 122 media
+      // links a fortnight ago — a key holding a space where the object held
+      // %20, so every HEAD missed a file that was sitting right there. A row
+      // rewrite fixes that; an upload is only needed if the object is
+      // genuinely absent, and the two are indistinguishable without looking.
+      const prefixes = [...new Set(broken.map((b) => b.key.replace(/[^/]+$/, "")))];
+      for (const prefix of prefixes) {
+        console.log(`\nWhat is actually in the bucket under ${prefix || "(root)"}:`);
+        try {
+          const listed = await r2.s3.send(
+            new ListObjectsV2Command({ Bucket: r2.bucket, Prefix: prefix, MaxKeys: 50 }),
+          );
+          const keys = (listed.Contents ?? []).map((o) => o.Key ?? "");
+          if (!keys.length) {
+            console.log("  nothing at all — the whole prefix is empty.");
+          } else {
+            for (const k of keys) console.log(`  ${k}`);
+            // A name that differs only in how a space is written is the whole
+            // point of printing this, so say so rather than leaving it to the
+            // reader to spot.
+            const loose = (v: string) => v.replace(/%20|\+|\s/g, "").toLowerCase();
+            for (const b of broken.filter((x) => x.key.startsWith(prefix))) {
+              const near = keys.find((k) => k !== b.key && loose(k) === loose(b.key));
+              if (near) {
+                console.log(`\n  #${b.id} is a NAME MISMATCH, not a missing file:`);
+                console.log(`    row says:   ${b.key}`);
+                console.log(`    bucket has: ${near}`);
+                console.log("    Repairable by rewriting the row — no upload needed.");
+              }
+            }
+          }
+        } catch (err) {
+          console.log(`  could not list: ${(err as Error).message.slice(0, 80)}`);
+        }
+      }
+
+      console.log("\nWhere no near-match is listed above, the object really is gone and nothing");
+      console.log("here can put it back: the picture has to be uploaded again from wherever the");
+      console.log("original is. Admin panel → Shop → edit the product → choose a new image.");
     }
   }
 
