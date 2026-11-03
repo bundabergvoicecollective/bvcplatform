@@ -1,6 +1,6 @@
 /**
- * Read-only: do the files behind avatars, library items, gallery posts and
- * event images actually live in OUR bucket?
+ * Read-only: do the files behind avatars, library items, gallery posts, event
+ * images and shop products actually live in OUR bucket?
  *
  * Every one of those rows carries a URL, and most carry a storage key. The
  * 29 September import copied rows; whether it copied the objects they point
@@ -33,6 +33,10 @@ const MEDIA: [table: string, urlColumn: string, keyColumn: string | null, label:
   ["events", "imageUrl", "imageKey", "performances (images)"],
   ["rehearsal_recordings", "fileUrl", "fileKey", "rehearsal recordings"],
   ["documents", "fileUrl", "fileKey", "documents"],
+  // Shop products were missing from this list, so the one place a broken
+  // image is in front of somebody being asked for money was the one place
+  // nothing checked. Two of them had been dead for a fortnight.
+  ["shop_products", "imageUrl", "imageKey", "shop product images"],
 ];
 
 /** Everything before the first single slash, so a host can be seen at a glance. */
@@ -173,6 +177,35 @@ async function main() {
           ` — ${verdict}`,
       );
       if (firstMissing) console.log(`  ${"".padEnd(24)}      missing keys look like: ${firstMissing}`);
+    }
+  }
+
+  // Shop products get named, not merely counted. A missing picture here is on
+  // a product people are asked to buy, and the only useful form of that
+  // finding is WHICH product: somebody has to upload the picture again, and a
+  // count tells them nothing about what to look for. Names of things for sale
+  // are not member data, so they are safe in a public log.
+  if (r2) {
+    const products = await query<{ id: number; name: string; u: string | null; k: string | null }[]>(
+      "SELECT id, name, imageUrl AS u, imageKey AS k FROM shop_products\n" +
+        "        WHERE imageUrl IS NOT NULL AND imageUrl <> ''",
+    );
+    const broken: { id: number; name: string; key: string }[] = [];
+    for (const prod of products) {
+      const key = keyFromUrl(prod.u, prod.k);
+      if (!key) continue;
+      const { missing } = await countPresent(r2, [key]);
+      if (missing) broken.push({ id: prod.id, name: prod.name, key });
+    }
+    if (broken.length) {
+      console.log(`\n${broken.length} shop product(s) have a picture that is not in the bucket:`);
+      for (const b of broken) {
+        console.log(`  #${b.id}  ${b.name}`);
+        console.log(`      points at: ${b.key}`);
+      }
+      console.log("\nThe file itself is gone, so nothing here can put it back — the picture has");
+      console.log("to be uploaded again from wherever the original is. Admin panel → Shop →");
+      console.log("edit the product → choose a new image.");
     }
   }
 
