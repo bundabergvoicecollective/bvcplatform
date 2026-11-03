@@ -162,7 +162,7 @@ import { notifyOwner } from "./_core/notification";
 import { PASS_PRODUCTS, PassProductKey } from "./products";
 import { sendOnlinePassReceipt, shouldIssueOnlinePassReceipt } from "./passReceipt";
 import { reconcilePendingOrders } from "./reconcile";
-import { savePushSubscription, deletePushSubscription } from "./webPush";
+import { savePushSubscription, deletePushSubscription, sendPushToAll, countPushSubscriptions } from "./webPush";
 
 // Square is used for payments (see server/_core/square.ts)
 
@@ -939,6 +939,40 @@ const coreRouter = router({
 
     // Return the VAPID public key so the frontend can subscribe
     vapidPublicKey: publicProcedure.query(() => process.env.VITE_VAPID_PUBLIC_KEY ?? ""),
+
+    // How many devices a notification would reach, without sending one.
+    //
+    // The number is the point. For weeks the honest answer was zero and
+    // nothing anywhere said so: the code was fine, the keys were set, and no
+    // member had ever completed the opt-in, so every announcement notified
+    // nobody in perfect silence. An admin should be able to see that before
+    // relying on a notification to reach the choir.
+    reach: adminProcedure.query(() => countPushSubscriptions()),
+
+    // Send a test notification to everyone who has turned notifications on.
+    //
+    // Only a real send proves the chain: our VAPID key, their subscription,
+    // Apple's or Google's push service, the handset, the service worker, the
+    // badge. Until tonight that could only be done from a GitHub Actions
+    // workflow, which is no way to check something before a rehearsal.
+    //
+    // A subscription IS the active state. A phone that has revoked
+    // permission or deleted the app answers 410, which deliver() takes as
+    // the instruction to forget that device — so the count this returns is
+    // also a tidy-up of subscriptions that were never going to work again.
+    sendTest: adminProcedure.mutation(async ({ ctx }) => {
+      const who = [ctx.user.firstName, ctx.user.lastName].filter(Boolean).join(" ")
+        || ctx.user.name
+        || `member #${ctx.user.id}`;
+      console.log(`[Push] test notification sent by ${who} (#${ctx.user.id})`);
+      // Said plainly, because it lands on the phone of anyone subscribed and
+      // the one thing they must not do is wonder whether it needs answering.
+      return sendPushToAll({
+        title: "BVC test notification",
+        body: "This is a test of notifications. Nothing to do — you can ignore it.",
+        url: "/notifications",
+      });
+    }),
   }),
 
   // ─── Announcements ──────────────────────────────────────────────────────────
