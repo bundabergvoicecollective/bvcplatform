@@ -7,6 +7,7 @@ import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
+import { startAutoUpdate } from "./lib/autoUpdate";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -67,3 +68,9 @@ createRoot(document.getElementById("root")!).render(
 // the Home Screen. Nothing about notifications is worth not rendering the app
 // for.
 registerServiceWorker();
+
+// A Home Screen app that is resumed rather than started keeps running the
+// bundle it was opened with, for as long as the phone keeps it suspended.
+// This reloads it when they come back, so a deploy reaches members without
+// anyone being asked to reinstall or force-close anything.
+startAutoUpdate();
