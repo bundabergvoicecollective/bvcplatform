@@ -19,21 +19,18 @@
 # expired, rather than hearing it from a member who did not get their pass.
 name: Reconcile payments
 
-# The schedule is deliberately off.
+# The schedule was off while Square's access token was returning 401, because
+# an hourly job that fails for a known reason teaches people to ignore it. The
+# token was replaced on 3 November 2026 and the `checkout` audit confirmed both
+# the profile read and a real payment link, so it is on.
 #
-# This job exits non-zero when Square refuses to answer, which is correct —
-# an hourly job reporting success while checking nothing is the failure this
-# project keeps paying for. But Square's access token is currently returning
-# 401, so every scheduled run would fail and send a failed-workflow email,
-# every hour, until the token is replaced. An alarm that goes off continuously
-# for a known reason is one people learn to ignore.
-#
-# TO TURN IT ON: replace SQUARE_ACCESS_TOKEN, confirm with the `checkout`
-# audit, then uncomment the two schedule lines below. Nothing else changes.
+# If it starts failing hourly again, read the run before assuming it is noise:
+# the most likely cause is the token expiring, which is exactly what this is
+# here to catch.
 on:
-  # schedule:
-  #   # Hourly, at 23 past, to stay off the top-of-hour crush.
-  #   - cron: "23 * * * *"
+  schedule:
+    # Hourly, at 23 past, to stay off the top-of-hour crush.
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       apply:
