@@ -45,6 +45,7 @@ on:
           - checkout
           - clearpending
           - annotatepass
+          - push
       apply:
         description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending and annotatepass only)"
         type: boolean
@@ -258,6 +259,18 @@ jobs:
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
           fi
+
+      # Has anyone actually got notifications working? The subscription count
+      # is the only honest measure — the code can be perfect and still reach
+      # nobody. Read-only unless the args ask it to send, which posts one
+      # notification to one named member and nobody else.
+      - name: Audit push notifications
+        if: inputs.audit == 'push'
+        env:
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/pushAudit.ts $ARGS
 
       # Writes down why a pass exists. A balance with nothing behind it looks
       # the same as money gone missing until somebody who was there confirms
