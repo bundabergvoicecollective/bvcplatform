@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -2202,6 +2202,49 @@ export async function getInviteByToken(token: string) {
   if (!db) throw new Error("DB unavailable");
   const [row] = await db.select().from(inviteTokens).where(eq(inviteTokens.token, token));
   return row ?? null;
+}
+
+/**
+ * A live invitation for this address: sent, not used, not expired.
+ *
+ * Being invited and having an account are different things, and the gap
+ * between them was invisible. An invite writes a token and sends two emails;
+ * it creates no user row. So somebody could accept the invite, get the code,
+ * enter it, and still not exist as a member — and when they then asked for a
+ * password reset, /api/auth/forgot looked for a user, found none, sent
+ * nothing, and told them a link was on its way. It answers the same way for a
+ * stranger as for a member on purpose, so the form cannot be used to find out
+ * who is in the choir; the cost was that a member stuck mid-invite got the
+ * same silence. This is what lets that request do the right thing instead:
+ * send the invitation again, which is the link they actually need.
+ *
+ * Newest first, because an admin who invites the same person twice means the
+ * second one.
+ */
+export async function getLiveInviteByEmail(email: string) {
+  if (!db) throw new Error("DB unavailable");
+  const [row] = await db
+    .select()
+    .from(inviteTokens)
+    .where(
+      and(
+        sql`lower(trim(${inviteTokens.email})) = ${email.toLowerCase().trim()}`,
+        isNull(inviteTokens.usedAt),
+        gt(inviteTokens.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(desc(inviteTokens.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Note that the invitation email has just been sent again. */
+export async function markInviteResent(token: string) {
+  if (!db) throw new Error("DB unavailable");
+  await db
+    .update(inviteTokens)
+    .set({ lastResentAt: new Date() })
+    .where(eq(inviteTokens.token, token));
 }
 
 export async function markInviteUsed(token: string, userId: number) {

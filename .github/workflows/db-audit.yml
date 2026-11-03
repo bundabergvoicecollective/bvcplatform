@@ -46,6 +46,7 @@ on:
           - clearpending
           - annotatepass
           - push
+          - invitestatus
       apply:
         description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending and annotatepass only)"
         type: boolean
@@ -259,6 +260,17 @@ jobs:
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
           fi
+
+      # Where did an invited member get stuck? Being invited and having an
+      # account are different things, and the reset form cannot tell the
+      # difference — it answers a stranger and a member identically, so an
+      # invited person with no account is told a link is on its way and gets
+      # nothing. Read-only.
+      - name: Check invite progress
+        if: inputs.audit == 'invitestatus'
+        env:
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/inviteStatus.ts $ARGS
 
       # Has anyone actually got notifications working? The subscription count
       # is the only honest measure — the code can be perfect and still reach

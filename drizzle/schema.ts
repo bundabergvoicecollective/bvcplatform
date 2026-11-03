@@ -399,6 +399,11 @@ export const inviteTokens = mysqlTable("invite_tokens", {
   usedAt: timestamp("usedAt"),
   usedBy: int("usedBy"),
   expiresAt: timestamp("expiresAt").notNull(),
+  // When the invitation email was last sent again. /api/auth/forgot resends
+  // the invite to somebody who has a live invite and no account — the dead
+  // end that left four invited people with nowhere to go — and this is what
+  // stops that form being used to post the same email at them repeatedly.
+  lastResentAt: timestamp("lastResentAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type InviteToken = typeof inviteTokens.$inferSelect;

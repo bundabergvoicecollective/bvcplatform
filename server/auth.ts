@@ -4,7 +4,8 @@
  * POST /api/auth/register — create account (status=pending until approved by admin)
  * POST /api/auth/logout   — clear session cookie
  * GET  /api/auth/me       — return current user (or 401)
- * POST /api/auth/forgot   — email a single-use link to set/reset a password
+ * POST /api/auth/forgot   — email a single-use link to set/reset a password,
+ *                           or resend the invitation if there is no account yet
  * POST /api/auth/reset    — set a new password using that link, then sign in
  * POST /api/auth/invite-complete — finish an invite: choose a password, sign in
  */
@@ -12,12 +13,12 @@ import type { Express } from "express";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
-import { countMembersSignedIn, db, getInviteByToken, markInviteUsed, sameEmail } from "../db";
+import { countMembersSignedIn, db, getInviteByToken, getLiveInviteByEmail, markInviteResent, markInviteUsed, sameEmail } from "../db";
 import { notifyOwner } from "../_core/notification";
 import { passwordResets, users } from "../drizzle/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
-import { sendEmail } from "../email";
+import { buildInviteEmail, sendEmail } from "../email";
 
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -197,7 +198,52 @@ export function registerAuthRoutes(app: Express) {
       if (!email) return res.status(400).json({ error: "Email is required" });
       const normalizedEmail = email.toLowerCase().trim();
       const [user] = await db.select().from(users).where(sameEmail(normalizedEmail)).limit(1);
-      if (!user || user.status === "denied") return res.json(generic);
+
+      // No member row. Two very different situations behind one answer, and
+      // until now both of them sent nothing and said nothing anywhere.
+      //
+      // Four invited people turned out to have no account: an invite writes a
+      // token and sends two emails but creates no user, so somebody could
+      // accept the invitation, receive the code, enter it, and still not
+      // exist. Their next move was this form, which found no member, sent no
+      // email, and told them a link was on its way. Two of them waited all
+      // evening for an email that was never going to come.
+      //
+      // The link they need is the invitation, so send that instead. The reply
+      // stays identical either way — that is what stops this form being used
+      // to discover who is in the choir — but the log now says which branch
+      // ran, because "nothing was sent" and "the mail server is broken" looked
+      // exactly alike from outside and cost an evening to tell apart.
+      if (!user) {
+        const invite = await getLiveInviteByEmail(normalizedEmail);
+        if (!invite) {
+          console.log("[Auth] forgot: no member and no live invite for", normalizedEmail, "— nothing sent");
+          return res.json(generic);
+        }
+        // Same two minutes the reset path allows itself. Without it, anyone
+        // who knows the address can post this form in a loop and mail-bomb
+        // somebody who has not even joined yet.
+        const lastSent = invite.lastResentAt ?? invite.createdAt;
+        if (lastSent && lastSent > new Date(Date.now() - 2 * 60 * 1000)) {
+          console.log("[Auth] forgot: invite for", normalizedEmail, "was sent in the last 2 minutes — not resending");
+          return res.json(generic);
+        }
+
+        const inviteUrl = `${appOrigin(req)}/invite/${invite.token}`;
+        const sent = await sendEmail({ to: normalizedEmail, ...buildInviteEmail(inviteUrl, invite.expiresAt) });
+        if (sent) {
+          await markInviteResent(invite.token);
+          console.log("[Auth] forgot: no account yet — resent the invitation to", normalizedEmail);
+        } else {
+          console.error("[Auth] forgot: invitation could not be resent to", normalizedEmail);
+        }
+        return res.json(generic);
+      }
+
+      if (user.status === "denied") {
+        console.log("[Auth] forgot: member", user.id, "is denied — nothing sent");
+        return res.json(generic);
+      }
 
       // Light rate limit: at most one live link per 2 minutes per member.
       const [recent] = await db
@@ -216,7 +262,8 @@ export function registerAuthRoutes(app: Express) {
       const link = `${appOrigin(req)}/reset-password?token=${token}`;
       const name = user.firstName || user.name || "there";
       const sent = await sendEmail({ to: normalizedEmail, ...buildResetEmail(name, link, !user.passwordHash) });
-      if (!sent) console.error("[Auth] reset email could not be sent to", normalizedEmail);
+      if (sent) console.log("[Auth] forgot: reset link sent to", normalizedEmail);
+      else console.error("[Auth] reset email could not be sent to", normalizedEmail);
       return res.json(generic);
     } catch (err) {
       console.error("[Auth] forgot error:", err);
