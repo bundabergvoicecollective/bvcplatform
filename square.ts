@@ -82,6 +82,33 @@ export async function getSquareOrderStatus(orderId: string): Promise<{ paid: boo
   }
 }
 
+/**
+ * The same lookup as getSquareOrderStatus, but it throws rather than
+ * swallowing an API failure.
+ *
+ * getSquareOrderStatus returns null for everything that goes wrong — an order
+ * Square has never heard of, and Square refusing the credentials entirely.
+ * The caller cannot tell those apart, so an expired token reads as "none of
+ * these are paid", which is the quiet kind of wrong this codebase keeps
+ * paying for. The admin sync still uses the forgiving version; anything that
+ * has to distinguish "not paid" from "could not ask" uses this one.
+ *
+ * null here means one thing only: Square answered, and knows no such order.
+ */
+export async function getSquareOrderState(
+  orderId: string,
+): Promise<{ paid: boolean; paymentId?: string; amountCents?: number } | null> {
+  const response = await squareClient.orders.get({ orderId });
+  const order = response.order;
+  if (!order) return null;
+  const tenders = order.tenders ?? [];
+  return {
+    paid: order.state === "COMPLETED" || tenders.length > 0,
+    paymentId: tenders[0]?.paymentId ?? undefined,
+    amountCents: order.totalMoney?.amount != null ? Number(order.totalMoney.amount) : undefined,
+  };
+}
+
 /** Verify a Square webhook notification signature */
 export async function verifySquareWebhook(
   body: string,

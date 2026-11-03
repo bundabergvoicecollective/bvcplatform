@@ -1,0 +1,95 @@
+# Activate passes the webhook missed.
+#
+# A pass is normally granted the moment Square posts payment.updated to
+# /api/square/webhook. That is a single point of failure: if Square cannot
+# reach us for ten minutes — a deploy, a cold start that times out, a
+# Cloudflare hiccup — the member has paid, holds no pass, and nothing happens
+# until somebody notices and presses Sync.
+#
+# This asks Square every hour which pending orders were actually paid and
+# activates those, running the same code the Sync button runs. A missed
+# webhook heals itself within the hour.
+#
+# It cannot grant a pass on our own records alone. Square has to confirm the
+# payment, and an order Square will not answer for is reported, never assumed.
+#
+# It fails loudly when Square refuses, because an hourly job that reports
+# success while checking nothing is the exact failure this project has been
+# bitten by before — and a red run here is how we learn the access token has
+# expired, rather than hearing it from a member who did not get their pass.
+name: Reconcile payments
+
+on:
+  schedule:
+    # Hourly, at 23 past, to stay off the top-of-hour crush.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Activate the passes (unticked = report only)"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: reconcile-payments
+  cancel-in-progress: false
+
+env:
+  DB_HOST: gateway01.ap-southeast-1.prod.aws.tidbcloud.com
+  DB_PORT: "4000"
+  DB_USER: 3JSdBrsm7qtoEPs.root
+  DB_NAME: bvc
+
+jobs:
+  reconcile:
+    name: Activate paid orders
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same resolution as deploy.yml and db-audit.yml.
+      - name: Resolve database URL
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import os, urllib.parse
+          url = os.environ.get("DATABASE_URL_SECRET", "").strip()
+          if not url:
+              pw = urllib.parse.quote(os.environ["DB_PASSWORD"].strip(), safe="")
+              url = (f"mysql://{os.environ['DB_USER']}:{pw}@{os.environ['DB_HOST']}:"
+                     f"{os.environ['DB_PORT']}/{os.environ['DB_NAME']}"
+                     '?ssl={"rejectUnauthorized":true}')
+          print(f"::add-mask::{url}")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"DATABASE_URL={url}\n")
+          EOF
+
+      - name: Reconcile
+        env:
+          SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
+          SQUARE_LOCATION_ID: ${{ secrets.SQUARE_LOCATION_ID }}
+          SQUARE_ENVIRONMENT: ${{ secrets.SQUARE_ENVIRONMENT }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          APP_URL: https://members.bundabergvoicecollective.com.au
+          # A scheduled run applies. A manual run honours the tick box, which
+          # defaults to applying too — the report-only mode exists for when
+          # somebody wants to look before letting it write.
+          APPLY: ${{ github.event_name == 'schedule' && 'true' || inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/reconcilePayments.ts --apply
+          else
+            pnpm exec tsx scripts/reconcilePayments.ts
+          fi
