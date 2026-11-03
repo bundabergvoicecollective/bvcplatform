@@ -161,6 +161,7 @@ import { storagePrepareUpload, storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { PASS_PRODUCTS, PassProductKey } from "./products";
 import { sendOnlinePassReceipt, shouldIssueOnlinePassReceipt } from "./passReceipt";
+import { reconcilePendingOrders } from "./reconcile";
 import { savePushSubscription, deletePushSubscription } from "./webPush";
 
 // Square is used for payments (see server/_core/square.ts)
@@ -1272,75 +1273,34 @@ const coreRouter = router({
         return { sent, skipped, failed };
       }),
 
-    // Admin: sync all pending orders against Square to auto-activate paid ones
+    /**
+     * The Sync button. Runs exactly the code the hourly reconciliation runs —
+     * see reconcile.ts — because two implementations of "decide whether to
+     * grant a pass" would drift, and the one that drifted would be the one
+     * nobody tested.
+     *
+     * It used to count a Square refusal as a skip, so an expired token
+     * reported "0 activated, 27 skipped", which reads exactly like nobody
+     * having paid. Now it says so instead.
+     */
     syncPendingOrders: adminProcedure.mutation(async () => {
-      const allOrders = await getAllPassOrders();
-      const pending = allOrders.filter((o) => o.status === "pending" && o.stripeSessionId);
-      let activated = 0;
-      let skipped = 0;
-      for (const order of pending) {
-        try {
-          const squareStatus = await getSquareOrderStatus(order.stripeSessionId!);
-          if (!squareStatus) { skipped++; continue; }
-          if (!squareStatus.paid) { skipped++; continue; }
-          // Order is paid — activate the pass
-          const existingPass = await getActivePassForUser(order.userId);
-          let finalPass;
-          if (existingPass) {
-            finalPass = await topUpPass(existingPass.id, order.sessionCount);
-          } else {
-            finalPass = await assignPass({
-              userId: order.userId,
-              totalSessions: order.sessionCount,
-              assignedBy: 0,
-              notes: `Purchased via Square —  ${order.passType} (synced)`,
-            });
-          }
-          await updatePassOrderStatus(order.stripeSessionId!, "paid", { passId: finalPass?.id });
-          const newBalance = finalPass?.remainingSessions ?? order.sessionCount;
-          const wasTopUp = !!existingPass;
-          await createNotification({
-            userId: order.userId,
-            type: "general",
-            title: wasTopUp ? "Pass Topped Up" : "Pass Activated",
-            message: wasTopUp
-              ? `Your pass has been topped up by ${order.sessionCount} sessions. You now have ${newBalance} sessions remaining.`
-              : `Your ${order.passType} (${order.sessionCount} sessions) has been activated. Enjoy your rehearsals!`,
-          });
-          const oldBal = existingPass?.remainingSessions ?? 0;
-          await logActivity({
-            userId: order.userId,
-            actorId: null,
-            action: "pass_online_purchase",
-            detail: wasTopUp
-              ? `Admin sync: Square order #${order.id} paid — +${order.sessionCount} sessions (${order.passType}). Balance: ${oldBal} → ${newBalance}.`
-              : `Admin sync: Square order #${order.id} paid — ${order.passType} (${order.sessionCount} sessions) activated. Balance: 0 → ${newBalance}.`,
-            balanceBefore: wasTopUp ? oldBal : 0,
-            balanceAfter: newBalance,
-          }).catch(() => {});
-          const members = await getAllMembers();
-          const member = members.find((m) => m.id === order.userId);
-          const paidOrder = { ...order, status: "paid" as const };
-          if (member?.email && shouldIssueOnlinePassReceipt(paidOrder)) {
-            const receiptSent = await sendOnlinePassReceipt({
-              to: member.email,
-              memberName: getDisplayName(member),
-              passType: order.passType,
-              sessionCount: order.sessionCount,
-              amountCents: order.amountCents,
-              currency: order.currency,
-              paymentReference: order.paymentSessionId ?? order.stripeSessionId ?? `BVC-${order.id}`,
-              purchasedAt: new Date(),
-            });
-            if (receiptSent) await markPassOrderReceiptSent(order.id);
-          }
-          activated++;
-        } catch (err) {
-          console.error(`[SyncOrders] Error processing order ${order.id}:`, err);
-          skipped++;
-        }
+      const result = await reconcilePendingOrders({ apply: true, source: "Admin sync" });
+      if (result.squareUnavailable) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            "Square would not answer, so nothing could be checked — this is usually an " +
+            "expired access token. No orders have been changed.",
+        });
       }
-      return { activated, skipped, total: pending.length };
+      return {
+        activated: result.activated,
+        skipped: result.notPaid + result.noReference + result.unreachable,
+        total: result.total,
+        notPaid: result.notPaid,
+        noReference: result.noReference,
+        unreachable: result.unreachable,
+      };
     }),
 
     // Admin: manually activate a specific pending order
