@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
@@ -25,6 +24,10 @@ export default function InvitePage() {
   const [codeError, setCodeError] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // Fetch invite info
   const inviteQuery = trpc.invites.get.useQuery(
@@ -125,10 +128,37 @@ export default function InvitePage() {
     sendCodeMutation.mutate({ token: token ?? "" });
   };
 
-  const handleContinueToLogin = () => {
-    // Store token so the app can call invites.accept after OAuth completes
-    sessionStorage.setItem("pendingInviteToken", token ?? "");
-    window.location.href = getLoginUrl();
+  /**
+   * The last step of being invited.
+   *
+   * Not a tRPC mutation: this one sets the session cookie, and the tRPC client
+   * is already holding query results from when there was no session. A plain
+   * POST followed by a full page load is the only way to be sure the app comes
+   * up signed in rather than half-signed-in.
+   */
+  const handleSetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 8) {
+      setSaveError("Please use at least 8 characters.");
+      return;
+    }
+    setSaving(true);
+    setSaveError("");
+    try {
+      const res = await fetch("/api/auth/invite-complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ token: token ?? "", password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not finish setting up your account");
+      toast.success("Welcome to Bundaberg Voice Collective!");
+      window.location.href = "/dashboard";
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not finish setting up your account");
+      setSaving(false);
+    }
   };
 
   const formatExpiry = (d: Date | null) =>
@@ -159,9 +189,22 @@ export default function InvitePage() {
             <XCircle className="w-12 h-12" style={{ color: "oklch(0.55 0.18 25)" }} />
             <h1 className="text-xl font-bold" style={{ color: "oklch(0.22 0.07 240)" }}>Invite Unavailable</h1>
             <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>{errorMsg}</p>
-            <p className="text-xs" style={{ color: "oklch(0.65 0.02 240)" }}>
-              Please ask your choir administrator for a new invitation.
-            </p>
+            {/* An already-used invite means the account exists, so sending
+                them to the administrator for a new one is the wrong advice
+                and another dead end. */}
+            {/already been used/i.test(errorMsg) ? (
+              <Button
+                className="font-semibold"
+                style={{ background: "oklch(0.78 0.17 75)", color: "oklch(0.12 0.04 240)" }}
+                onClick={() => { window.location.href = "/login"; }}
+              >
+                Sign in instead
+              </Button>
+            ) : (
+              <p className="text-xs" style={{ color: "oklch(0.65 0.02 240)" }}>
+                Please ask your choir administrator for a new invitation.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -277,7 +320,20 @@ export default function InvitePage() {
     );
   }
 
-  // ── Verified — sign in to complete ─────────────────────────────────────────
+
+  // ── Verified — choose a password, which is the last step ───────────────────
+  //
+  // This is where four invited people stopped. The code proved they read the
+  // mailbox, and then the page sent them to the sign-in screen to enter "your
+  // email and password" — a password nobody had ever given them, for an
+  // account that did not exist yet, because an invite creates a token and two
+  // emails and no user row. The only way through was to guess that "forgot
+  // password" was meant for them; and that was a dead end too, because the
+  // reset form looks for a member, finds nobody, and says a link is on its
+  // way. Two of them asked for one tonight and are still waiting.
+  //
+  // So the password is set here, in the same sitting, one field, while they
+  // are still holding the phone that received the code.
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={bgStyle}>
       <Card className="w-full max-w-md border-0 shadow-xl">
@@ -297,7 +353,9 @@ export default function InvitePage() {
               Bundaberg Voice Collective
             </p>
             <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
-              Your email has been confirmed. Sign in to complete your membership and set up your profile.
+              {user
+                ? "Your email has been confirmed. Completing your membership…"
+                : "One last step: choose a password. You'll use it with your email address to sign in from now on."}
             </p>
           </div>
 
@@ -313,13 +371,55 @@ export default function InvitePage() {
               Completing membership…
             </div>
           ) : (
-            <Button
-              className="w-full font-semibold text-base py-5"
-              style={{ background: "oklch(0.78 0.17 75)", color: "oklch(0.12 0.04 240)" }}
-              onClick={handleContinueToLogin}
-            >
-              Sign in &amp; Set Up Profile
-            </Button>
+            <form onSubmit={handleSetPassword} className="w-full space-y-3 text-left">
+              <label className="block">
+                <span className="text-sm font-semibold" style={{ color: "oklch(0.22 0.07 240)" }}>
+                  Choose a password
+                </span>
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setSaveError(""); }}
+                  autoComplete="new-password"
+                  autoFocus
+                  disabled={saving}
+                  placeholder="At least 8 characters"
+                  className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </label>
+
+              {/* One field, not two. A confirm box is the commonest place for
+                  somebody to get stuck on a phone keyboard; being able to read
+                  what you typed solves the same problem without the trap. */}
+              <label className="flex items-center gap-2 text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
+                <input
+                  type="checkbox"
+                  checked={showPassword}
+                  onChange={(e) => setShowPassword(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                Show password
+              </label>
+
+              {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+
+              <Button
+                type="submit"
+                className="w-full font-semibold text-base py-5"
+                style={{ background: "oklch(0.78 0.17 75)", color: "oklch(0.12 0.04 240)" }}
+                disabled={password.length < 8 || saving}
+              >
+                {saving ? (
+                  <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Setting up your account…</>
+                ) : (
+                  "Finish and sign in"
+                )}
+              </Button>
+
+              <p className="text-xs" style={{ color: "oklch(0.65 0.02 240)" }}>
+                Already set a password? <a href="/login" className="underline">Sign in instead</a>.
+              </p>
+            </form>
           )}
 
           {inviteExpiry && (
