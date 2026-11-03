@@ -19,10 +19,21 @@
 # expired, rather than hearing it from a member who did not get their pass.
 name: Reconcile payments
 
+# The schedule is deliberately off.
+#
+# This job exits non-zero when Square refuses to answer, which is correct —
+# an hourly job reporting success while checking nothing is the failure this
+# project keeps paying for. But Square's access token is currently returning
+# 401, so every scheduled run would fail and send a failed-workflow email,
+# every hour, until the token is replaced. An alarm that goes off continuously
+# for a known reason is one people learn to ignore.
+#
+# TO TURN IT ON: replace SQUARE_ACCESS_TOKEN, confirm with the `checkout`
+# audit, then uncomment the two schedule lines below. Nothing else changes.
 on:
-  schedule:
-    # Hourly, at 23 past, to stay off the top-of-hour crush.
-    - cron: "23 * * * *"
+  # schedule:
+  #   # Hourly, at 23 past, to stay off the top-of-hour crush.
+  #   - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       apply:
@@ -83,9 +94,10 @@ jobs:
           SQUARE_ENVIRONMENT: ${{ secrets.SQUARE_ENVIRONMENT }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           APP_URL: https://members.bundabergvoicecollective.com.au
-          # A scheduled run applies. A manual run honours the tick box, which
-          # defaults to applying too — the report-only mode exists for when
-          # somebody wants to look before letting it write.
+          # A scheduled run applies, once the schedule is enabled. A manual
+          # run honours the tick box, which defaults to applying too — the
+          # report-only mode exists for when somebody wants to look before
+          # letting it write.
           APPLY: ${{ github.event_name == 'schedule' && 'true' || inputs.apply }}
         run: |
           if [ "$APPLY" = "true" ]; then
