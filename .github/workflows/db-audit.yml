@@ -43,8 +43,9 @@ on:
           - markattendance
           - attendancesweep
           - checkout
+          - clearpending
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments and markattendance only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance and clearpending only)"
         type: boolean
         required: false
         default: false
@@ -255,6 +256,22 @@ jobs:
             pnpm exec tsx scripts/doorPayments.ts $ARGS --apply
           else
             pnpm exec tsx scripts/doorPayments.ts $ARGS
+          fi
+
+      # Closes out pending pass orders settled some other way. Marks them
+      # cancelled rather than deleting — the row is the only record that the
+      # attempt happened. Touches no pass and no balance, and refuses to run
+      # if any pending order has a pass attached.
+      - name: Close out pending orders
+        if: inputs.audit == 'clearpending'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/clearPendingOrders.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/clearPendingOrders.ts $ARGS
           fi
 
       # Why did an online pass purchase fail? Shows every order of every
