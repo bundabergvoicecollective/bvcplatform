@@ -17,7 +17,10 @@
  * expired — that have no user row. Somebody who already has an account is
  * skipped: for them the link is spent and the right advice is to sign in.
  * No member list is read and nobody else is written to. --email= narrows it
- * further to one address.
+ * to one address, and --since= to invitations sent on or after a Brisbane
+ * date — which is how you send to the two people who got stuck tonight
+ * without also writing to somebody who was invited three weeks ago and never
+ * opened it.
  *
  * Report-only unless --apply. The report is worth reading first, because
  * every run of this puts an email in somebody's inbox.
@@ -26,13 +29,16 @@
  * message id of each send is printed, which is what the Resend lookup takes.
  *
  * Usage: DATABASE_URL=… SMTP_PASS=… APP_URL=https://… \
- *          tsx scripts/resendInvites.ts [--email=someone@example.com] [--apply]
+ *          tsx scripts/resendInvites.ts [--email=someone@example.com] \
+ *          [--since=2026-11-03] [--apply]
  */
 import mysql from "mysql2/promise";
 import { buildInviteEmail, sendEmailVerbose, verifyEmailTransport } from "../email";
 
 const APPLY = process.argv.includes("--apply");
 const ONLY = process.argv.find((a) => a.startsWith("--email="))?.slice(8).trim().toLowerCase();
+/** Brisbane date, inclusive. Invitations sent before it are left alone. */
+const SINCE = process.argv.find((a) => a.startsWith("--since="))?.slice(8).trim();
 
 const mask = (e: string) => e.replace(/^(.{2})[^@]*(@.).*(\.[^.]+)$/, "$1•••$2•••$3");
 
@@ -57,6 +63,10 @@ async function main() {
   const origin = (process.env.APP_URL ?? "").replace(/\/$/, "");
   if (!origin) throw new Error("APP_URL is not set, and the invite link needs an origin.");
 
+  if (SINCE && !/^\d{4}-\d{2}-\d{2}$/.test(SINCE)) {
+    throw new Error("--since takes a Brisbane date as YYYY-MM-DD.");
+  }
+
   const conn = await mysql.createConnection(url);
   const q = async <T>(sql: string, p: unknown[] = []): Promise<T> => (await conn.query(sql, p))[0] as T;
 
@@ -72,7 +82,9 @@ async function main() {
        LEFT JOIN users u ON lower(trim(u.email)) = lower(trim(i.email))
       WHERE i.usedAt IS NULL
         AND i.expiresAt > now()
+        AND (? IS NULL OR DATE(DATE_ADD(i.createdAt, INTERVAL 10 HOUR)) >= ?)
       ORDER BY i.createdAt DESC`,
+    [SINCE ?? null, SINCE ?? null],
   );
 
   const stuck = rows.filter(
@@ -80,7 +92,10 @@ async function main() {
   );
   const haveAccounts = rows.filter((r) => r.userId);
 
-  console.log(`${rows.length} live invitation(s); ${stuck.length} with no account.\n`);
+  console.log(
+    `${rows.length} live invitation(s)${SINCE ? ` sent on or after ${SINCE}` : ""}; ` +
+      `${stuck.length} with no account.\n`,
+  );
 
   if (haveAccounts.length) {
     console.log(`Skipping ${haveAccounts.length} that already have an account — for them the`);
