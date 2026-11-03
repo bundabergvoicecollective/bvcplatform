@@ -30,6 +30,7 @@ import AttendanceHistory from "./pages/AttendanceHistory";
 import Shop from "./pages/Shop";
 import RehearsalRecordings from "./pages/RehearsalRecordings";
 import Gallery from "./pages/Gallery";
+import Notifications from "./pages/Notifications";
 import MetaBrowserBanner from "./components/MetaBrowserBanner";
 
 function Router() {
@@ -57,6 +58,7 @@ function Router() {
       <Route path="/shop/success" component={Shop} />
       <Route path="/rehearsal-recordings" component={RehearsalRecordings} />
       <Route path="/gallery" component={Gallery} />
+      <Route path="/notifications" component={Notifications} />
       <Route path="/admin" component={AdminPanel} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />

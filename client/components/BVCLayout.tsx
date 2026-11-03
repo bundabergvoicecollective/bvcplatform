@@ -33,6 +33,7 @@ import PendingApproval from "@/pages/PendingApproval";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["user", "admin"] },
+  { href: "/notifications", label: "Notifications", icon: Bell, roles: ["user", "admin"] },
   { href: "/announcements", label: "Announcements", icon: Megaphone, roles: ["user", "admin"] },
   { href: "/attendance", label: "Attendance", icon: Calendar, roles: ["admin"] },
   { href: "/live-streams", label: "Live Rehearsals", icon: Video, roles: ["user", "admin"] },
@@ -145,6 +146,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
         {visibleNav.map(({ href, label, icon: Icon }) => {
           const active = location === href || (href !== "/" && location.startsWith(href));
           const badgeCount =
+            label === "Notifications" ? unreadCount :
             label === "Announcements" ? unreadAnnouncementCount :
             label === "Chat" ? unreadMsgCount : 0;
 
@@ -175,7 +177,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
                   className="text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center"
                   style={{ background: TEAL, color: "white" }}
                 >
-                  {badgeCount}
+                  {badgeCount > 99 ? "99+" : badgeCount}
                 </span>
               )}
             </Link>
@@ -268,14 +270,21 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
             <Menu className="w-6 h-6" />
           </button>
           <img src="/bvc-logo.webp" alt="BVC" className="h-8 w-auto" />
-          <Link href="/announcements" className="relative" style={{ color: GOLD }}>
+          {/* To /notifications, not /announcements. The number counts every
+              kind of unread — new music, documents, performances — and the
+              announcements page can only clear announcements, so tapping the
+              bell used to leave most of the count exactly where it was. */}
+          <Link href="/notifications" className="relative" aria-label={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"} style={{ color: GOLD }}>
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
               <span
-                className="absolute -top-1 -right-1 w-4 h-4 text-xs rounded-full flex items-center justify-center font-bold"
+                // min-width rather than a fixed 16px square: at two digits a
+                // fixed square clipped the number, and a member with twelve
+                // unread saw "1".
+                className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 text-[11px] leading-none rounded-full flex items-center justify-center font-bold"
                 style={{ background: TEAL, color: "white" }}
               >
-                {unreadCount}
+                {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
           </Link>

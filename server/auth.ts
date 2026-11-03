@@ -6,12 +6,13 @@
  * GET  /api/auth/me       — return current user (or 401)
  * POST /api/auth/forgot   — email a single-use link to set/reset a password
  * POST /api/auth/reset    — set a new password using that link, then sign in
+ * POST /api/auth/invite-complete — finish an invite: choose a password, sign in
  */
 import type { Express } from "express";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
-import { countMembersSignedIn, db, sameEmail } from "../db";
+import { countMembersSignedIn, db, getInviteByToken, markInviteUsed, sameEmail } from "../db";
 import { notifyOwner } from "../_core/notification";
 import { passwordResets, users } from "../drizzle/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -294,6 +295,94 @@ export function registerAuthRoutes(app: Express) {
   });
 
   // ── Logout ────────────────────────────────────────────────────────────────
+  // ── Finish an invitation ──────────────────────────────────────────────────
+  // The last step of being invited: choose a password and be signed in.
+  //
+  // It did not exist. An invited member verified their email with the code and
+  // was then sent to the sign-in page — where they had no password, because
+  // nobody had ever given them one. The only way through was to guess that
+  // "Set up / forgot password" was meant for them, wait for a second email and
+  // follow a second link. Most people would conclude the invite was broken.
+  //
+  // The invite token is already a bearer credential and the code has already
+  // proved the person reads that mailbox, so there is nothing further to check
+  // before letting them choose a password — this is the same proof a reset
+  // link carries, collected in one sitting instead of two.
+  app.post("/api/auth/invite-complete", async (req, res) => {
+    try {
+      const { token, password } = req.body as { token?: string; password?: string };
+      if (!token || !password) {
+        return res.status(400).json({ error: "Token and password are required" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
+      }
+
+      const invite = await getInviteByToken(token);
+      if (!invite) return res.status(404).json({ error: "Invite not found" });
+      if (invite.usedAt) {
+        return res.status(409).json({ error: "This invite has already been used. Try signing in." });
+      }
+      if (invite.expiresAt < new Date()) {
+        return res.status(400).json({ error: "This invite link has expired. Ask for a new one." });
+      }
+      // The code is what proves they read the mailbox. Without it, the link
+      // alone would let anyone who saw it claim the account.
+      if (!invite.emailVerifiedAt) {
+        return res.status(400).json({ error: "Verify your email address first." });
+      }
+
+      const email = invite.email.toLowerCase().trim();
+      const passwordHash = await bcrypt.hash(password, 12);
+      const [existing] = await db.select().from(users).where(sameEmail(email)).limit(1);
+
+      let userId: number;
+      if (existing) {
+        // A member who was denied was excluded on purpose, and an invite does
+        // not undo that. Everyone else: inviting them IS the approval, so a
+        // pending row becomes active rather than landing them on a "waiting
+        // for approval" screen at the end of being approved.
+        if (existing.status === "denied") {
+          return res.status(403).json({ error: "This account cannot be activated. Please contact the choir." });
+        }
+        await db
+          .update(users)
+          .set({
+            passwordHash,
+            status: existing.status === "pending" ? "active" : existing.status,
+            loginMethod: existing.loginMethod ?? "email",
+          })
+          .where(eq(users.id, existing.id));
+        userId = existing.id;
+      } else {
+        const [inserted] = await db
+          .insert(users)
+          .values({
+            email,
+            passwordHash,
+            openId: `email:${email}`,
+            name: email,
+            // Invited by an admin, and the address is proved. There is nobody
+            // left to approve them.
+            status: "active",
+            role: "user",
+            loginMethod: "email",
+          })
+          .$returningId();
+        userId = inserted.id;
+      }
+
+      await markInviteUsed(token, userId);
+
+      const sessionToken = await signToken(userId);
+      res.cookie(COOKIE_NAME, sessionToken, cookieOptions(COOKIE_MAX_AGE));
+      return res.json({ message: "Welcome to Bundaberg Voice Collective" });
+    } catch (err) {
+      console.error("[Auth] invite-complete error:", err);
+      return res.status(500).json({ error: "Could not finish setting up your account" });
+    }
+  });
+
   app.post("/api/auth/logout", (_req, res) => {
     res.cookie(COOKIE_NAME, "", cookieOptions(0));
     return res.json({ message: "Logged out" });

@@ -51,17 +51,26 @@ export default function Notifications() {
   const { data: notifications, isLoading, refetch } = trpc.notifications.list.useQuery();
   const utils = trpc.useUtils();
 
+  // Both counts, not just one. The bell reads `unread` and the sidebar badges
+  // read `unreadSummary`; refreshing only the first left Announcements and
+  // Chat showing numbers that had already been cleared, until the 30-second
+  // poll caught up.
+  const refreshCounts = () => {
+    utils.notifications.unread.invalidate();
+    utils.notifications.unreadSummary.invalidate();
+  };
+
   const markRead = trpc.notifications.markRead.useMutation({
     onSuccess: () => {
       refetch();
-      utils.notifications.unread.invalidate();
+      refreshCounts();
     },
   });
 
   const markAll = trpc.notifications.markAllRead.useMutation({
     onSuccess: () => {
       refetch();
-      utils.notifications.unread.invalidate();
+      refreshCounts();
       toast.success("All notifications marked as read");
     },
   });
