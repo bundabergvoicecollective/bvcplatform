@@ -33,6 +33,20 @@ async function refreshBadge() {
   }
 }
 
+/**
+ * Take over straight away.
+ *
+ * Without these, a new worker sits in "waiting" until every tab using the old
+ * one is closed — and a Home Screen app is never closed, it is suspended. A
+ * fix to the push or badge handling below would reach a member weeks after it
+ * shipped, or never.
+ *
+ * Safe here because this worker controls no fetches and serves nothing from a
+ * cache: there is no half-updated state for a new version to inherit.
+ */
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 self.addEventListener("push", (event) => {
   if (!event.data) return;
   let data = {};
