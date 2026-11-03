@@ -47,8 +47,9 @@ on:
           - annotatepass
           - push
           - invitestatus
+          - resendinvites
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending and annotatepass only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending, annotatepass and resendinvites only)"
         type: boolean
         required: false
         default: false
@@ -266,6 +267,25 @@ jobs:
       # difference — it answers a stranger and a member identically, so an
       # invited person with no account is told a link is on its way and gets
       # nothing. Read-only.
+      # Sends an invitation again to every address holding a live invite with
+      # no account — the dead end that left four invited people nowhere to go.
+      # Worth doing only because the invite page now takes the password itself;
+      # before that deploy the link walked them into the same wall. Reports
+      # unless `apply` is ticked, and writes to nobody else.
+      - name: Resend unfinished invitations
+        if: inputs.audit == 'resendinvites'
+        env:
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          APP_URL: https://members.bundabergvoicecollective.com.au
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/resendInvites.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/resendInvites.ts $ARGS
+          fi
+
       - name: Check invite progress
         if: inputs.audit == 'invitestatus'
         env:
