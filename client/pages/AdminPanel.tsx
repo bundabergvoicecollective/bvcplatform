@@ -222,6 +222,99 @@ function FinancialMembersTab() {
 }
 
 // ─── Announcements Tab ────────────────────────────────────────────────────────
+/**
+ * Prove a notification reaches a phone, before relying on one.
+ *
+ * Everything about Web Push is invisible from the outside: the code can be
+ * perfect, the keys present, and if nobody has completed the opt-in then
+ * every announcement notifies nobody in total silence. That is what happened
+ * for weeks. The count here is the honest answer to "will this reach
+ * anyone?", and the button is the only way to prove the rest of the chain —
+ * our key, their subscription, Apple's or Google's push service, the
+ * handset, the service worker, the badge.
+ *
+ * It asks first, because the thing on the other end is somebody's phone.
+ */
+function PushTestCard() {
+  const reach = trpc.push.reach.useQuery();
+  const sendTest = trpc.push.sendTest.useMutation({
+    onSuccess: (r) => {
+      if (r.reason === "nobody-subscribed") {
+        toast.error("Nobody has notifications turned on, so nothing was sent.");
+      } else if (r.reason === "no-vapid-keys") {
+        toast.error("Notifications are not configured on the server — nothing was sent.");
+      } else if (r.accepted === 0) {
+        toast.error(`None of the ${r.devices} device(s) accepted it. Nothing arrived.`);
+      } else {
+        // Accepted is as far as a server can see. Saying "delivered" here
+        // would be the same overclaim that hid this feature being dead.
+        toast.success(
+          `Accepted by ${r.accepted} of ${r.devices} device(s)` +
+            (r.failed ? `, ${r.failed} failed` : "") +
+            (r.removed ? `, ${r.removed} dead subscription(s) removed` : ""),
+        );
+      }
+      reach.refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const devices = reach.data?.devices ?? 0;
+  const members = reach.data?.members ?? 0;
+
+  return (
+    <Card>
+      <CardContent className="py-3 px-4 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold flex items-center gap-1.5" style={{ color: NAVY }}>
+            <Bell className="w-3.5 h-3.5" /> Push notifications
+          </p>
+          <p className="text-xs mt-0.5 text-muted-foreground">
+            {reach.isLoading
+              ? "Counting who has them turned on…"
+              : devices === 0
+                ? "Nobody has notifications turned on yet — an announcement will reach no phones."
+                : `${devices} device${devices === 1 ? "" : "s"} across ${members} member${members === 1 ? "" : "s"}.`}
+          </p>
+        </div>
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs shrink-0"
+              disabled={devices === 0 || sendTest.isPending}
+            >
+              {sendTest.isPending ? "Sending…" : "Send Test"}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Send a test notification?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This puts a real notification on {devices} device
+                {devices === 1 ? "" : "s"} belonging to {members} member
+                {members === 1 ? "" : "s"}, right now, even if their phone is locked.
+                It says it is a test and that there is nothing to do.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => sendTest.mutate()}
+                style={{ background: TEAL, color: "white" }}
+              >
+                Send it
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AnnouncementsTab() {
   const { data: announcements, refetch } = trpc.announcements.list.useQuery();
   const [open, setOpen] = useState(false);
@@ -236,6 +329,8 @@ function AnnouncementsTab() {
 
   return (
     <div className="space-y-3">
+      <PushTestCard />
+
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold" style={{ color: NAVY }}>Announcements ({announcements?.length ?? 0})</p>
         <Dialog open={open} onOpenChange={setOpen}>
