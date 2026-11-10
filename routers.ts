@@ -86,6 +86,7 @@ import {
   getFinancials,
   getLastSessionStats,
   getSessionStats,
+  getAllSessionStats,
   createManualMember,
   recordCashPayment,
   recordDoorPayment,
@@ -810,6 +811,12 @@ const coreRouter = router({
     sessionStats: adminProcedure
       .input(z.object({ sessionId: z.number() }))
       .query(({ input }) => getSessionStats(input.sessionId)),
+
+    /**
+     * Every rehearsal's figures at once, for the collapsed attendance list
+     * and the dashboard graph. One request rather than one per rehearsal.
+     */
+    allSessionStats: adminProcedure.query(() => getAllSessionStats()),
 
     // Returns all sessions the current user attended (member-facing history)
     myHistory: protectedProcedure.query(({ ctx }) =>

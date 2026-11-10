@@ -37,7 +37,7 @@ import {
   userActivityLog,
 } from "./drizzle/schema";
 import { ENV } from "./_core/env";
-import { calculateSessionAttendanceStats } from "./attendanceStats";
+import { calculateSessionAttendanceStats, type AttendanceCategory } from "./attendanceStats";
 
 // Synchronous singleton initialised at module load (DATABASE_URL must be set before import)
 function createDb() {
@@ -723,6 +723,69 @@ export async function getLastSessionStats() {
 }
 
 // Returns per-session attendance breakdown for admin stats view
+/**
+ * The same figures as getSessionStats, for every session, in three queries.
+ *
+ * The attendance list shows a row per rehearsal and only fetched the numbers
+ * when a row was opened, so a collapsed list said nothing — and the "present"
+ * badge on a closed row read 0 whatever the night had been, because the data
+ * behind it was not loaded either. Asking per row would be one request per
+ * rehearsal and a year of Tuesdays is fifty of them.
+ *
+ * It reuses calculateSessionAttendanceStats rather than counting again here.
+ * Two implementations of "how many attended" is how a summary row and the
+ * list beneath it end up disagreeing in front of the person marking the roll.
+ */
+export async function getAllSessionStats() {
+  if (!db) return [];
+
+  const all = await db
+    .select({ id: sessions.id, title: sessions.title, sessionDate: sessions.sessionDate })
+    .from(sessions)
+    .orderBy(desc(sessions.sessionDate));
+  if (!all.length) return [];
+
+  const marks = await db
+    .select({ sessionId: attendance.sessionId, userId: attendance.userId, sessionType: attendance.sessionType })
+    .from(attendance)
+    .where(eq(attendance.attended, true));
+
+  // Online joins are matched to a rehearsal by date and by falling inside the
+  // stream's window, exactly as the single-session version does.
+  const online = await db
+    .select({ sessionId: sessions.id, userId: liveStreamAccess.userId })
+    .from(sessions)
+    .innerJoin(liveStreams, sql`DATE(${liveStreams.scheduledAt}) = DATE(${sessions.sessionDate})`)
+    .innerJoin(liveStreamAccess, eq(liveStreamAccess.streamId, liveStreams.id))
+    .where(and(
+      sql`${liveStreamAccess.grantedAt} >= DATE_SUB(${liveStreams.scheduledAt}, INTERVAL 1 HOUR)`,
+      sql`${liveStreamAccess.grantedAt} <= COALESCE(${liveStreams.endsAt}, DATE_ADD(${liveStreams.scheduledAt}, INTERVAL 3 HOUR))`,
+    ));
+
+  const marksBySession = new Map<number, { userId: number; sessionType: AttendanceCategory }[]>();
+  for (const m of marks) {
+    const list = marksBySession.get(m.sessionId) ?? [];
+    list.push({ userId: m.userId, sessionType: m.sessionType as AttendanceCategory });
+    marksBySession.set(m.sessionId, list);
+  }
+  const onlineBySession = new Map<number, { userId: number }[]>();
+  for (const o of online) {
+    const list = onlineBySession.get(o.sessionId) ?? [];
+    list.push({ userId: o.userId });
+    onlineBySession.set(o.sessionId, list);
+  }
+
+  return all.map((s) => ({
+    sessionId: s.id,
+    sessionTitle: s.title,
+    sessionDate: s.sessionDate,
+    ...calculateSessionAttendanceStats(
+      marksBySession.get(s.id) ?? [],
+      onlineBySession.get(s.id) ?? [],
+    ),
+  }));
+}
+
 export async function getSessionStats(sessionId: number) {
   if (!db) return null;
 

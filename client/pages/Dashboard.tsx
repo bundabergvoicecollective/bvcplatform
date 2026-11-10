@@ -24,6 +24,7 @@ import {
   PartyPopper,
   Plus,
   Banknote,
+  UserCheck,
   X,
 } from "lucide-react";
 import { format, isAfter, isBefore, addDays } from "date-fns";
@@ -407,6 +408,172 @@ const INCOME_BAR = "oklch(0.6 0.18 350)";
 const INK = "oklch(0.22 0.07 240)";
 const INK_MUTED = "oklch(0.52 0.03 240)";
 
+/**
+ * How many came, Tuesday by Tuesday.
+ *
+ * The figure existed only one rehearsal at a time, on a row you had to open,
+ * so "are numbers holding up?" was a question nobody could answer without
+ * opening a dozen rows and remembering what they said. A bar per rehearsal
+ * answers it at a glance, and the shape of the thing — steady, climbing,
+ * slipping — is the part no single number carries.
+ *
+ * ONE SERIES, so no legend: the card title names the measure. The breakdown
+ * (pass, single, complimentary, online) is in the tooltip rather than drawn
+ * as a stack, because the question this card answers is "how many", and four
+ * stacked segments make the total harder to read, not easier.
+ *
+ * THE TEAL IS NOT INTERCHANGEABLE WITH THE INCOME PINK. Checked with the
+ * palette validator: against the card they each pass the lightness band,
+ * chroma floor and 3:1 contrast, but as a PAIR they fail CVD separation —
+ * ΔE 4.1 for a deuteranope, where 8 is the target. They are legible here only
+ * because they are two single-series cards, each named by its own title, and
+ * colour is never what tells them apart. Do not put them in one chart as two
+ * series: a red-green colourblind reader would see one colour.
+ *
+ * A rehearsal with nobody marked is drawn at zero rather than dropped. An
+ * unmarked roll and an empty hall are different problems and both are worth
+ * seeing; the tooltip says which one it is.
+ */
+const ATTEND_BAR = "oklch(0.55 0.14 185)";
+
+function AttendanceChart() {
+  const { data, isLoading } = trpc.attendance.allSessionStats.useQuery();
+
+  if (isLoading) return <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />;
+
+  // The query hands back newest first; a time axis reads oldest to newest.
+  const recent = [...(data ?? [])].reverse().slice(-14);
+
+  const rows = recent.map((st) => ({
+    label: format(new Date(st.sessionDate), "d MMM"),
+    full: format(new Date(st.sessionDate), "EEEE d MMMM yyyy"),
+    title: st.sessionTitle,
+    total: st.total,
+    pass: st.passCount,
+    single: st.singleCount,
+    comp: st.complimentaryCount,
+    online: st.onlineCount,
+  }));
+
+  const marked = rows.filter((r) => r.total > 0);
+  const average = marked.length
+    ? Math.round(marked.reduce((n, r) => n + r.total, 0) / marked.length)
+    : 0;
+  const latest = marked[marked.length - 1];
+  const previous = marked[marked.length - 2];
+
+  return (
+    <Card className="border-0 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-semibold flex items-center gap-2" style={{ color: INK }}>
+          <UserCheck className="w-4 h-4" style={{ color: ATTEND_BAR }} />
+          Attendance by rehearsal
+        </CardTitle>
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 pt-1">
+          {latest && (
+            <span className="text-sm" style={{ color: INK_MUTED }}>
+              Last rehearsal{" "}
+              <span className="text-lg font-semibold tabular-nums" style={{ color: INK }}>
+                {latest.total}
+              </span>
+            </span>
+          )}
+          {previous && (
+            <span className="text-sm" style={{ color: INK_MUTED }}>
+              Before that <span className="font-semibold tabular-nums">{previous.total}</span>
+            </span>
+          )}
+          {marked.length > 0 && (
+            <span className="text-sm" style={{ color: INK_MUTED }}>
+              Average <span className="font-semibold tabular-nums">{average}</span>
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-1">
+        {!marked.length ? (
+          <p className="text-sm py-8 text-center" style={{ color: INK_MUTED }}>
+            No attendance has been marked yet.
+          </p>
+        ) : (
+          <div className="h-48 -ml-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap="22%">
+                {/* Recessive: horizontal rules only, no vertical lines, no axis spines */}
+                <CartesianGrid vertical={false} stroke="oklch(0.92 0.01 240)" />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                  tick={{ fontSize: 10, fill: "oklch(0.52 0.03 240)" }}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  width={32}
+                  allowDecimals={false}
+                  tick={{ fontSize: 10, fill: "oklch(0.52 0.03 240)" }}
+                />
+                <Tooltip
+                  cursor={{ fill: "oklch(0.95 0.01 240)" }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const row = payload[0].payload as (typeof rows)[number];
+                    const parts = [
+                      row.pass ? `${row.pass} on a pass` : null,
+                      row.single ? `${row.single} single` : null,
+                      row.comp ? `${row.comp} complimentary` : null,
+                      row.online ? `${row.online} online` : null,
+                    ].filter(Boolean);
+                    return (
+                      <div className="rounded-lg border bg-white px-3 py-2 shadow-sm">
+                        <p className="text-xs" style={{ color: INK_MUTED }}>{row.full}</p>
+                        {row.total === 0 ? (
+                          <p className="text-sm font-semibold" style={{ color: INK }}>
+                            Nobody marked
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-sm font-semibold tabular-nums" style={{ color: INK }}>
+                              {row.total} attended
+                            </p>
+                            {parts.length > 0 && (
+                              <p className="text-xs mt-0.5" style={{ color: INK_MUTED }}>
+                                {parts.join(" · ")}
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  }}
+                />
+                {/* 4px rounded ends on the data end only, anchored to the baseline */}
+                <Bar dataKey="total" fill={ATTEND_BAR} radius={[4, 4, 0, 0]} maxBarSize={26} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 text-xs" style={{ color: INK_MUTED }}>
+          <span>
+            The last {rows.length} rehearsal{rows.length === 1 ? "" : "s"}. Hover a bar for how the night was paid for.
+            {/* The newest rehearsal sits at zero until the roll is marked, and
+                a zero bar is an empty column — which reads as a glitch rather
+                than as a job still to do unless something says which it is. */}
+            {rows.length > 0 && rows[rows.length - 1].total === 0 && (
+              <> The last column is empty because {rows[rows.length - 1].label} has not been marked yet.</>
+            )}
+          </span>
+          <a href="/attendance" className="underline whitespace-nowrap">
+            Every rehearsal
+          </a>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function WeeklyIncomeChart() {
   const { data, isLoading } = trpc.dashboard.weeklyIncome.useQuery();
 
@@ -665,6 +832,9 @@ function AdminDashboard() {
 
           {/* Week-on-week income — admin only, as the whole block is */}
           <WeeklyIncomeChart />
+
+          {/* How many came, Tuesday by Tuesday */}
+          <AttendanceChart />
         </div>
       )}
 
