@@ -54,6 +54,9 @@ import {
   listLibraryItems,
   listSessions,
   markAllNotificationsRead,
+  markNotificationUnread,
+  deleteNotification,
+  deleteReadNotifications,
   markAnnouncementRead,
   markMessagesRead,
   markNotificationRead,
@@ -909,6 +912,24 @@ const coreRouter = router({
       ),
     markAllRead: protectedProcedure.mutation(({ ctx }) =>
       markAllNotificationsRead(ctx.user.id)
+    ),
+    // Each of these is scoped to the signed-in member inside db.ts, by userId
+    // as well as notification id. Notification ids are a plain
+    // auto-increment, so a procedure that trusted the id alone would let
+    // anyone read off somebody else's notifications by counting.
+    markUnread: protectedProcedure
+      .input(z.object({ notificationId: z.number() }))
+      .mutation(({ input, ctx }) =>
+        markNotificationUnread(input.notificationId, ctx.user.id)
+      ),
+    delete: protectedProcedure
+      .input(z.object({ notificationId: z.number() }))
+      .mutation(({ input, ctx }) =>
+        deleteNotification(input.notificationId, ctx.user.id)
+      ),
+    /** Clears the ones already read, and returns how many went. */
+    clearRead: protectedProcedure.mutation(({ ctx }) =>
+      deleteReadNotifications(ctx.user.id)
     ),
     unreadSummary: protectedProcedure.query(async ({ ctx }) => {
       const userId = ctx.user.id;

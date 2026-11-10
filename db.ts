@@ -966,6 +966,57 @@ export async function markAllNotificationsRead(userId: number) {
   await db.update(notifications).set({ read: true }).where(eq(notifications.userId, userId));
 }
 
+/**
+ * Put one back to unread.
+ *
+ * Reading a notification on a phone is often accidental — a thumb on the
+ * wrong card — and until now that was final: the only way to mark something
+ * for later was to remember it. Marking unread is how somebody keeps hold of
+ * a thing they cannot deal with yet.
+ */
+export async function markNotificationUnread(notificationId: number, userId: number) {
+  if (!db) return;
+  await db
+    .update(notifications)
+    .set({ read: false })
+    .where(and(eq(notifications.id, notificationId), eq(notifications.userId, userId)));
+}
+
+/**
+ * Throw one away.
+ *
+ * Scoped by userId as well as id, always. Without that, anyone could post an
+ * id that is not theirs and delete somebody else's notification — the id is
+ * a plain auto-increment, so guessing them takes no skill at all.
+ */
+export async function deleteNotification(notificationId: number, userId: number) {
+  if (!db) return;
+  await db
+    .delete(notifications)
+    .where(and(eq(notifications.id, notificationId), eq(notifications.userId, userId)));
+}
+
+/**
+ * Clear out everything already read, in one go.
+ *
+ * Deliberately never touches an unread one. The list holds the last fifty,
+ * so for anyone who has been here a while "delete" one at a time is not a
+ * real option — and a button that cleared the unread ones too would throw
+ * away the thing they had not seen yet.
+ */
+export async function deleteReadNotifications(userId: number): Promise<number> {
+  if (!db) return 0;
+  const doomed = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), eq(notifications.read, true)));
+  if (!doomed.length) return 0;
+  await db
+    .delete(notifications)
+    .where(and(eq(notifications.userId, userId), eq(notifications.read, true)));
+  return doomed.length;
+}
+
 // ─── Announcements ────────────────────────────────────────────────────────────
 
 export async function createAnnouncement(data: {

@@ -574,7 +574,7 @@ export default function Events() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) { setEditingEvent(null); setForm(emptyForm); } }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle style={{ color: NAVY }}>{editingEvent ? "Edit Performance" : "Create New Performance"}</DialogTitle>
           </DialogHeader>
