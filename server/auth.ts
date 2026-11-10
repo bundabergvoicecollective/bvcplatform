@@ -13,6 +13,7 @@ import type { Express } from "express";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
+import { withEffectiveRole } from "../_core/context";
 import { countMembersSignedIn, db, getInviteByToken, getLiveInviteByEmail, markInviteResent, markInviteUsed, sameEmail } from "../db";
 import { notifyOwner } from "../_core/notification";
 import { passwordResets, users } from "../drizzle/schema";
@@ -453,8 +454,11 @@ export function registerAuthRoutes(app: Express) {
       const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
       if (!user) return res.status(401).json({ error: "User not found" });
 
-      // Don't leak passwordHash
-      const { passwordHash: _ph, ...safeUser } = user;
+      // Don't leak passwordHash. The role is the EFFECTIVE one, as it is for
+      // tRPC: an admin viewing as a member must look like a member to
+      // everything that asks, or the two halves of the app disagree about
+      // who is standing there.
+      const { passwordHash: _ph, ...safeUser } = withEffectiveRole(user);
       return res.json(safeUser);
     } catch {
       return res.status(401).json({ error: "Invalid session" });

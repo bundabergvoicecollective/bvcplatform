@@ -7,13 +7,69 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Camera, Save, User, AlertCircle } from "lucide-react";
+import { Camera, Save, User, AlertCircle, Shield, ShieldOff } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useState, useEffect, useRef } from "react";
 
 const TEAL = "oklch(0.55 0.14 185)";
 const NAVY = "oklch(0.22 0.07 240)";
 const MUTED = "oklch(0.52 0.03 240)";
+
+/**
+ * Put admin rights down to see what the choir sees.
+ *
+ * Andy and Christie sign in with their personal addresses and are admins on
+ * those accounts, so there was no way for either to look at the app as a
+ * member — and "it looks fine to me" is the oldest way to miss a broken page.
+ *
+ * The role never changes. Only the view does, and it is reversible from this
+ * same switch, which lives on Profile precisely because Profile is a page a
+ * member can still reach. Hide the way back inside the admin area and the
+ * first person to use this is stuck.
+ */
+function AdminRightsCard({ realRole, adminMode }: { realRole?: string; adminMode?: boolean }) {
+  const utils = trpc.useUtils();
+  const setMode = trpc.auth.setAdminMode.useMutation({
+    onSuccess: async ({ adminMode: on }) => {
+      await utils.invalidate();
+      toast.success(on ? "Admin rights are back on." : "Admin rights off — this is what a member sees.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Only someone who really is an admin ever sees this, whichever way their
+  // rights are currently set.
+  if (realRole !== "admin") return null;
+  const on = adminMode !== false;
+
+  return (
+    <Card className="border-0 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2" style={{ color: NAVY }}>
+          {on ? <Shield className="w-4 h-4" style={{ color: TEAL }} />
+              : <ShieldOff className="w-4 h-4" style={{ color: "oklch(0.60 0.16 60)" }} />}
+          Admin rights
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start justify-between gap-4">
+          <p className="text-sm" style={{ color: MUTED }}>
+            {on
+              ? "You have full admin access. Turn this off to use the app exactly as a member does — the admin pages and buttons disappear until you turn it back on."
+              : "You are using the app as a member. The admin pages and buttons are hidden. Nothing has changed about your account, and this switch brings them back."}
+          </p>
+          <Switch
+            checked={on}
+            disabled={setMode.isPending}
+            onCheckedChange={(next) => setMode.mutate({ on: next })}
+            aria-label="Admin rights"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Profile() {
   const { user } = useAuth();
@@ -442,6 +498,11 @@ export default function Profile() {
             </div>
           </CardContent>
         </Card>
+
+        <AdminRightsCard
+          realRole={(user as { realRole?: string } | null | undefined)?.realRole}
+          adminMode={(user as { adminMode?: boolean } | null | undefined)?.adminMode}
+        />
       </div>
     </BVCLayout>
   );

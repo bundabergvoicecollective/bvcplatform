@@ -8,16 +8,37 @@ import { users } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import cookie from "cookie";
 
+/**
+ * The signed-in member as every procedure sees them.
+ *
+ * `role` is the EFFECTIVE role. An admin who has put their admin rights down
+ * is presented here as a plain member, which is the whole point: the forty-odd
+ * places that ask "is this an admin?" — both admin guards included — then give
+ * the member answer without any of them being changed or remembering to.
+ *
+ * `realRole` is what the database actually says, and only one thing uses it:
+ * the switch that turns the rights back on. If turning them off demoted the
+ * row, turning them on again would need the permission they had just given
+ * up, and an admin would lock themselves out of their own choir.
+ */
+export type ContextUser = User & { realRole: User["role"] };
+
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
-  user: User | null;
+  user: ContextUser | null;
 };
+
+/** Present an admin who is viewing as a member as a member. */
+export function withEffectiveRole(row: User): ContextUser {
+  const viewingAsMember = row.role === "admin" && row.adminMode === false;
+  return { ...row, realRole: row.role, role: viewingAsMember ? "user" : row.role };
+}
 
 export async function createContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
-  let user: User | null = null;
+  let user: ContextUser | null = null;
 
   try {
     const rawCookies = opts.req.headers.cookie ?? "";
@@ -31,7 +52,7 @@ export async function createContext(
 
       if (typeof userId === "number") {
         const [found] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-        user = found ?? null;
+        user = found ? withEffectiveRole(found) : null;
       }
     }
   } catch {

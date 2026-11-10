@@ -29,6 +29,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { updateAppBadge } from "@/lib/appBadge";
 import NotificationPrompt from "./NotificationPrompt";
+import AdminViewingAsMember from "./AdminViewingAsMember";
 import { getLoginUrl } from "@/const";
 import PendingApproval from "@/pages/PendingApproval";
 
@@ -301,6 +302,9 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
         {/* Above the page, not inside it, so it is on every screen rather
             than only the one nobody could reach. Renders nothing once they
             have turned notifications on, or dismissed it this week. */}
+        {/* An admin who has put their rights down needs telling why half the
+            app has vanished, and needs the way back without hunting. */}
+        <AdminViewingAsMember user={user} />
         <NotificationPrompt />
 
         <main className={noPadding ? "flex-1 flex flex-col overflow-hidden" : "flex-1 p-6 min-w-0 overflow-x-clip"}>

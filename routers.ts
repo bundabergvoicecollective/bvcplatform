@@ -31,6 +31,7 @@ import {
   getMonthlyOnlinePassSalesSummary,
   getActivePassForUser,
   getAdminStats,
+  setAdminMode,
   getAttendanceForSession,
   getAttendanceForUser,
   getConversation,
@@ -184,6 +185,32 @@ const coreRouter = router({
   // ─── Auth ──────────────────────────────────────────────────────────────────
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+
+    /**
+     * Put admin rights down, or pick them back up.
+     *
+     * Andy and Christie sign in with their personal addresses and are admins
+     * on those accounts, so they had no way to see what the choir sees — and
+     * "it looks fine to me" is the oldest way to miss a broken page.
+     *
+     * It reads the role from the DATABASE, not from ctx.user, and that is the
+     * whole trick. ctx.user.role is the effective role, which is "user" while
+     * rights are down; gating this on it would mean needing admin rights to
+     * turn admin rights back on. An admin would put them down once and be
+     * locked out of their own choir with no way back but a database edit.
+     *
+     * Nobody gains anything they did not have: a member whose stored role is
+     * not admin is refused, whichever way they ask.
+     */
+    setAdminMode: protectedProcedure
+      .input(z.object({ on: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        const ok = await setAdminMode(ctx.user.id, input.on);
+        if (!ok) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only an admin can change this." });
+        }
+        return { adminMode: input.on };
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });

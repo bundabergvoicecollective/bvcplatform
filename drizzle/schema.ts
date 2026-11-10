@@ -30,6 +30,11 @@ export const users = mysqlTable("users", {
   voicePart: mysqlEnum("voicePart", ["soprano1", "soprano2", "altoHigh", "altoLow", "tenor", "bass"]),
   memberSince: varchar("memberSince", { length: 7 }), // stored as YYYY-MM string
   singingExperience: mysqlEnum("singingExperience", ["beginner", "some_experience", "intermediate", "advanced", "professional"]),
+  // Admins can put their own admin rights down to see the app as a member
+  // sees it. It is a VIEW setting, not the role: the role stays "admin", so
+  // turning rights back on never needs a permission they have just given up.
+  // Defaults on, so every existing admin keeps working.
+  adminMode: boolean("adminMode").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
