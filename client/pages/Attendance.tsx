@@ -149,10 +149,58 @@ function CreateSessionDialog({ onCreated }: { onCreated: () => void }) {
 
 // ─── Session Row ──────────────────────────────────────────────────────────────
 
+/**
+ * The night's figures: attended, and how it was paid for.
+ *
+ * On the header rather than inside the opened panel, because the question
+ * "how many came on the 25th?" was only answerable by opening the row and
+ * waiting for two queries. The closed row showed "0 present" — not a figure
+ * at all, just the absence of data nobody had fetched.
+ *
+ * Shown even at zero: a rehearsal nobody has marked yet and a rehearsal
+ * nobody came to look identical otherwise, and the first is a job to do.
+ */
+function SessionFigures({ figures }: { figures?: SessionSummary }) {
+  if (!figures) return null;
+  const dot = <span style={{ color: "oklch(0.65 0.03 240)" }}>·</span>;
+
+  return (
+    <div className="flex items-center gap-x-2 gap-y-1 text-xs flex-wrap mt-1.5">
+      <span className="flex items-center gap-1.5 font-semibold" style={{ color: "oklch(0.35 0.1 185)" }}>
+        <UserCheck className="w-3.5 h-3.5" />
+        {figures.total} attended
+      </span>
+      {figures.passCount > 0 && (<>{dot}
+        <span className="flex items-center gap-1" style={{ color: "oklch(0.45 0.1 185)" }}>
+          <CreditCard className="w-3.5 h-3.5" />{figures.passCount} pass
+        </span></>)}
+      {figures.singleCount > 0 && (<>{dot}
+        <span style={{ color: "oklch(0.52 0.03 240)" }}>{figures.singleCount} single</span></>)}
+      {figures.complimentaryCount > 0 && (<>{dot}
+        <span className="flex items-center gap-1" style={{ color: "oklch(0.45 0.12 145)" }}>
+          <Gift className="w-3.5 h-3.5" />{figures.complimentaryCount} complimentary
+        </span></>)}
+      {figures.onlineCount > 0 && (<>{dot}
+        <span style={{ color: "oklch(0.45 0.10 280)" }}>{figures.onlineCount} online</span></>)}
+    </div>
+  );
+}
+
+/** The figures for one rehearsal, as the batched query returns them. */
+type SessionSummary = {
+  total: number;
+  passCount: number;
+  singleCount: number;
+  complimentaryCount: number;
+  onlineCount: number;
+};
+
 function SessionRow({
   session,
+  summary,
 }: {
   session: { id: number; title: string; sessionDate: Date; notes?: string | null };
+  summary?: SessionSummary;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [memberSearch, setMemberSearch] = useState("");
@@ -240,7 +288,12 @@ function SessionRow({
   });
 
   const attendanceMap = new Map((attendanceData ?? []).map((a) => [a.userId, a]));
-  const presentCount = attendanceData?.filter((a) => a.attended).length ?? 0;
+
+  // Open: the live numbers, which move as the roll is marked. Shut: the
+  // batched ones, because nothing per-session is fetched for a closed row —
+  // which is why the badge on a closed row used to read 0 present however
+  // many people had been there.
+  const figures: SessionSummary | undefined = (expanded && stats) ? stats as SessionSummary : summary;
 
   return (
     <Card className="border-0 shadow-sm overflow-hidden">
@@ -262,12 +315,10 @@ function SessionRow({
             <p className="text-xs" style={{ color: "oklch(0.52 0.03 240)" }}>
               {format(new Date(session.sessionDate), "EEEE, d MMMM yyyy · h:mm a")}
             </p>
+            <SessionFigures figures={figures} />
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">
-            {presentCount} present
-          </Badge>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -286,35 +337,6 @@ function SessionRow({
       {/* Expanded attendance panel */}
       {expanded && (
         <div className="border-t px-5 py-4 space-y-4" style={{ borderColor: "oklch(0.88 0.01 240)" }}>
-
-          {/* Per-session stats summary */}
-          {stats && stats.total > 0 && (
-            <div className="flex items-center gap-4 p-3 rounded-lg text-sm flex-wrap"
-              style={{ background: "oklch(0.96 0.02 185)" }}>
-              <div className="flex items-center gap-1.5 font-semibold" style={{ color: "oklch(0.35 0.1 185)" }}>
-                <UserCheck className="w-4 h-4" />
-                <span>{stats.total} attended</span>
-              </div>
-              <span style={{ color: "oklch(0.65 0.03 240)" }}>·</span>
-              <div className="flex items-center gap-1.5" style={{ color: "oklch(0.45 0.1 185)" }}>
-                <CreditCard className="w-3.5 h-3.5" />
-                <span>{stats.passCount} pass</span>
-              </div>
-              <span style={{ color: "oklch(0.65 0.03 240)" }}>·</span>
-              <div style={{ color: "oklch(0.52 0.03 240)" }}>
-                <span>{stats.singleCount} single</span>
-              </div>
-              {(stats as any).complimentaryCount > 0 && (
-                <>
-                  <span style={{ color: "oklch(0.65 0.03 240)" }}>·</span>
-                  <div className="flex items-center gap-1.5" style={{ color: "oklch(0.45 0.12 145)" }}>
-                    <Gift className="w-3.5 h-3.5" />
-                    <span>{(stats as any).complimentaryCount} complimentary</span>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
 
           {!members || members.length === 0 ? (
             <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
@@ -749,6 +771,10 @@ function MemberAttendanceRow({
 export default function Attendance() {
   const { user } = useAuth();
   const { data: sessions, isLoading } = trpc.sessions.list.useQuery();
+  // Every rehearsal's figures in one request, so a closed row can show them.
+  // Per-row queries would be one request per Tuesday of the year.
+  const { data: allStats } = trpc.attendance.allSessionStats.useQuery();
+  const statsById = new Map((allStats ?? []).map((st) => [st.sessionId, st]));
   const [_refresh, setRefresh] = useState(0);
 
   if (user?.role !== "admin") {
@@ -800,7 +826,7 @@ export default function Attendance() {
         ) : (
           <div className="space-y-3">
             {sessions.map((s) => (
-              <SessionRow key={s.id} session={s as any} />
+              <SessionRow key={s.id} session={s as any} summary={statsById.get(s.id)} />
             ))}
           </div>
         )}
