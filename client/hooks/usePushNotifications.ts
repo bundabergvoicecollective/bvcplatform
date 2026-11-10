@@ -14,6 +14,42 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return outputArray;
 }
 
+/**
+ * navigator.serviceWorker.ready never resolves if no worker was ever
+ * registered — it waits, silently, for one that is not coming. Awaiting it
+ * bare left `loading` true for good, which is a button greyed out with no
+ * message and no way back short of closing the app.
+ */
+function workerReady(timeoutMs = 10_000): Promise<ServiceWorkerRegistration> {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("The app's background service did not start. Close BVC completely and open it again.")),
+        timeoutMs,
+      ),
+    ),
+  ]);
+}
+
+/**
+ * Where this particular person turns notifications back on.
+ *
+ * Once a browser has been told no, it will never ask again — the only way
+ * back is the settings app, and where that is differs per platform. "Enable
+ * it in your browser settings" is true everywhere and useful nowhere.
+ */
+export function howToUnblock(): string {
+  if (isIOS()) {
+    return isInstalled()
+      ? "Open the Settings app → Notifications → BVC, and allow them."
+      : "Open the Settings app → Apps → Safari → Notifications, and allow them for this site.";
+  }
+  // Chrome and the Samsung browser both put it behind the icon to the left
+  // of the address bar.
+  return "Tap the padlock or ⓘ next to the web address, then Permissions or Site settings, and allow Notifications.";
+}
+
 export function usePushNotifications() {
   const [supported, setSupported] = useState(false);
   /** iPhone or iPad that has not been added to the home screen yet. */
@@ -39,12 +75,30 @@ export function usePushNotifications() {
     if (isSupported) {
       setPermission(Notification.permission);
       // Check if already subscribed
-      navigator.serviceWorker.ready.then((reg) => {
-        reg.pushManager.getSubscription().then((sub) => {
-          setSubscribed(!!sub);
-        });
-      });
+      workerReady()
+        .then((reg) => reg.pushManager.getSubscription())
+        .then((sub) => setSubscribed(!!sub))
+        // No worker, no subscription. Not knowing is not an error worth
+        // putting in front of anybody.
+        .catch(() => setSubscribed(false));
     }
+  }, []);
+
+  // Somebody who was blocked goes to their settings, allows notifications and
+  // comes back to a page still insisting they are blocked, because
+  // Notification.permission was read once at mount. Re-read it when they
+  // return, or the instructions we just gave them appear not to work.
+  useEffect(() => {
+    if (!("Notification" in window)) return;
+    const recheck = () => {
+      if (document.visibilityState === "visible") setPermission(Notification.permission);
+    };
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("focus", recheck);
+    return () => {
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("focus", recheck);
+    };
   }, []);
 
   // Registration moved to client/lib/registerServiceWorker.ts, called at app
@@ -56,16 +110,48 @@ export function usePushNotifications() {
       toast.error("Add BVC to your Home Screen first — then open it from there.");
       return;
     }
-    if (!supported || !vapidKey) return;
+    if (!supported) {
+      toast.error("This browser cannot show notifications.");
+      return;
+    }
+
+    // ASK FIRST, BEFORE ANY await.
+    //
+    // A browser only shows the permission prompt while it still considers
+    // itself to be handling the tap. The old order awaited
+    // serviceWorker.ready first, which ends that window: on the stricter
+    // browsers the request was then refused without a prompt ever appearing,
+    // and the member saw nothing happen. It is the reason this worked on some
+    // phones and not others.
+    let perm: NotificationPermission = Notification.permission;
+    if (perm !== "granted") {
+      try {
+        perm = await Notification.requestPermission();
+      } catch {
+        perm = Notification.permission;
+      }
+    }
+    setPermission(perm);
+    if (perm === "denied") {
+      toast.error(`Notifications are blocked for BVC. ${howToUnblock()}`, { duration: 12_000 });
+      return;
+    }
+    if (perm !== "granted") {
+      // Dismissed rather than refused: asking again later is allowed.
+      toast("No answer given, so nothing changed. Tap Turn on again when you are ready.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const reg = await navigator.serviceWorker.ready;
-      const perm = await Notification.requestPermission();
-      setPermission(perm);
-      if (perm !== "granted") {
-        toast.error("Notification permission denied. Enable it in your browser settings.");
+      // Checked here rather than in a silent early return: the button did
+      // nothing at all while this query was still in flight, which looks
+      // exactly like a broken button.
+      if (!vapidKey) {
+        toast.error("Notifications are not ready yet — wait a moment and tap Turn on again.");
         return;
       }
+      const reg = await workerReady();
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapidKey),
@@ -88,7 +174,7 @@ export function usePushNotifications() {
   const unsubscribe = async () => {
     setLoading(true);
     try {
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await workerReady();
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
         await sub.unsubscribe();
