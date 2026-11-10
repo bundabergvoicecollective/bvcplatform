@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Camera, Save, User, AlertCircle, Shield, ShieldOff } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { useState, useEffect, useRef } from "react";
 
@@ -17,55 +16,66 @@ const NAVY = "oklch(0.22 0.07 240)";
 const MUTED = "oklch(0.52 0.03 240)";
 
 /**
- * Put admin rights down to see what the choir sees.
+ * View as member.
  *
  * Andy and Christie sign in with their personal addresses and are admins on
  * those accounts, so there was no way for either to look at the app as a
  * member — and "it looks fine to me" is the oldest way to miss a broken page.
  *
- * The role never changes. Only the view does, and it is reversible from this
- * same switch, which lives on Profile precisely because Profile is a page a
- * member can still reach. Hide the way back inside the admin area and the
- * first person to use this is stuck.
+ * Admin rights are the default and stay the default: this is a thing you step
+ * into and come back from, not a setting to be left somewhere. Framed as the
+ * action rather than as a switch on "admin rights", because the question an
+ * admin actually has is "what does this look like for them?".
+ *
+ * The role never changes — only the view — and it is reversible from here and
+ * from the bar that sits on every page while it is on. This card lives on
+ * Profile precisely because Profile is a page a member can still reach: hide
+ * the way back inside the admin area and the first person to use it is stuck.
+ *
+ * Shown only to someone whose stored role is admin, whichever way their view
+ * is currently set. Nobody else has this option, or any use for it.
  */
-function AdminRightsCard({ realRole, adminMode }: { realRole?: string; adminMode?: boolean }) {
+function ViewAsMemberCard({ realRole, adminMode }: { realRole?: string; adminMode?: boolean }) {
   const utils = trpc.useUtils();
   const setMode = trpc.auth.setAdminMode.useMutation({
     onSuccess: async ({ adminMode: on }) => {
       await utils.invalidate();
-      toast.success(on ? "Admin rights are back on." : "Admin rights off — this is what a member sees.");
+      toast.success(on ? "Back to admin view." : "Now viewing as a member.");
     },
     onError: (e) => toast.error(e.message),
   });
 
-  // Only someone who really is an admin ever sees this, whichever way their
-  // rights are currently set.
   if (realRole !== "admin") return null;
-  const on = adminMode !== false;
+  const viewingAsMember = adminMode === false;
 
   return (
     <Card className="border-0 shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2" style={{ color: NAVY }}>
-          {on ? <Shield className="w-4 h-4" style={{ color: TEAL }} />
-              : <ShieldOff className="w-4 h-4" style={{ color: "oklch(0.60 0.16 60)" }} />}
-          Admin rights
+          {viewingAsMember
+            ? <ShieldOff className="w-4 h-4" style={{ color: "oklch(0.60 0.16 60)" }} />
+            : <Shield className="w-4 h-4" style={{ color: TEAL }} />}
+          View as member
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="flex items-start justify-between gap-4">
-          <p className="text-sm" style={{ color: MUTED }}>
-            {on
-              ? "You have full admin access. Turn this off to use the app exactly as a member does — the admin pages and buttons disappear until you turn it back on."
-              : "You are using the app as a member. The admin pages and buttons are hidden. Nothing has changed about your account, and this switch brings them back."}
-          </p>
-          <Switch
-            checked={on}
-            disabled={setMode.isPending}
-            onCheckedChange={(next) => setMode.mutate({ on: next })}
-            aria-label="Admin rights"
-          />
-        </div>
+      <CardContent className="space-y-3">
+        <p className="text-sm" style={{ color: MUTED }}>
+          {viewingAsMember
+            ? "You are seeing the app exactly as a member does. Your admin pages and buttons are hidden until you switch back. Nothing has changed about your account."
+            : "See the app exactly as a member does. Your admin pages and buttons are hidden while you look, and one tap brings them back. Nothing changes about your account."}
+        </p>
+        <Button
+          size="sm"
+          variant={viewingAsMember ? "default" : "outline"}
+          disabled={setMode.isPending}
+          onClick={() => setMode.mutate({ on: viewingAsMember })}
+          style={viewingAsMember ? { background: TEAL, color: "white" } : undefined}
+          className="font-semibold"
+        >
+          {setMode.isPending
+            ? "Switching…"
+            : viewingAsMember ? "Back to admin view" : "View as member"}
+        </Button>
       </CardContent>
     </Card>
   );
@@ -499,7 +509,7 @@ export default function Profile() {
           </CardContent>
         </Card>
 
-        <AdminRightsCard
+        <ViewAsMemberCard
           realRole={(user as { realRole?: string } | null | undefined)?.realRole}
           adminMode={(user as { adminMode?: boolean } | null | undefined)?.adminMode}
         />

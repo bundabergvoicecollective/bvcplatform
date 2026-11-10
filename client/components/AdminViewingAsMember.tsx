@@ -25,7 +25,7 @@ export default function AdminViewingAsMember({
   const setMode = trpc.auth.setAdminMode.useMutation({
     onSuccess: async () => {
       await utils.invalidate();
-      toast.success("Admin rights are back on.");
+      toast.success("Back to admin view.");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -40,8 +40,8 @@ export default function AdminViewingAsMember({
     >
       <ShieldOff className="w-4 h-4 shrink-0" style={{ color: "oklch(0.45 0.12 60)" }} />
       <p className="text-sm min-w-0 flex-1" style={{ color: "oklch(0.35 0.07 60)" }}>
-        <strong>Viewing as a member.</strong> Your admin rights are off, so the
-        admin pages and buttons are hidden.
+        <strong>Viewing as a member.</strong> Your admin pages and buttons are
+        hidden while you look.
       </p>
       <Button
         size="sm"
@@ -50,7 +50,7 @@ export default function AdminViewingAsMember({
         onClick={() => setMode.mutate({ on: true })}
         style={{ background: "oklch(0.55 0.14 185)", color: "white" }}
       >
-        {setMode.isPending ? "Turning on…" : "Turn back on"}
+        {setMode.isPending ? "Switching…" : "Back to admin view"}
       </Button>
     </div>
   );
