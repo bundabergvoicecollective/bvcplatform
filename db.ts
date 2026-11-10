@@ -1260,6 +1260,26 @@ export async function updateLibraryItem(
 
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
 
+/**
+ * Put an admin's rights down, or pick them back up.
+ *
+ * The role in the row never changes — only the view setting. The check here
+ * reads the STORED role deliberately: the caller's effective role is "user"
+ * while their rights are down, so gating on that would mean needing admin
+ * rights to turn admin rights back on, and an admin would lock themselves
+ * out of their own choir with no way back but a database edit.
+ *
+ * Returns false for anyone whose stored role is not admin, so nobody can
+ * grant themselves anything by asking nicely.
+ */
+export async function setAdminMode(userId: number, on: boolean): Promise<boolean> {
+  if (!db) return false;
+  const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  if (row?.role !== "admin") return false;
+  await db.update(users).set({ adminMode: on }).where(eq(users.id, userId));
+  return true;
+}
+
 export async function getAdminStats() {
   if (!db) return { totalMembers: 0, totalSessions: 0, totalLibraryItems: 0, totalAnnouncements: 0 };
 

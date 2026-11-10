@@ -201,12 +201,20 @@ async function main() {
       );
     }
 
-    const [members] = await q<{ total: number; canSignIn: number }[]>(
+    // The admin count is here because "who can see the admin pages?" had no
+    // answer short of reading the users table, and the View as member switch
+    // is offered to exactly that set of people.
+    const [members] = await q<{ total: number; canSignIn: number; admins: number }[]>(
       `SELECT count(*) AS total,
-              sum(passwordHash IS NOT NULL AND passwordHash <> '') AS canSignIn
+              sum(passwordHash IS NOT NULL AND passwordHash <> '') AS canSignIn,
+              sum(role = 'admin') AS admins
          FROM users WHERE status = 'active'`,
     );
-    ok("members", `${members.total} active, ${members.canSignIn} have set a password`);
+    ok(
+      "members",
+      `${members.total} active, ${members.canSignIn} have set a password, ` +
+        `${members.admins} ${Number(members.admins) === 1 ? "admin" : "admins"}`,
+    );
 
     const [passes] = await q<{ active: number; sessions: number }[]>(
       "SELECT count(*) AS active, COALESCE(sum(remainingSessions),0) AS sessions FROM passes WHERE active = 1",
