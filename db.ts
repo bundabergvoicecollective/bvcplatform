@@ -680,18 +680,48 @@ export async function registerLiveStreamAttendance(streamId: number, userId: num
 }
 
 // Returns attendance count + pass-type breakdown for the most recent session
+/**
+ * How long after its start a rehearsal counts as over.
+ *
+ * Rehearsals begin at 6:30pm Brisbane, so two hours puts the changeover at
+ * 8:30pm — which is what was asked for, and what the room is actually like:
+ * the roll is marked and the door money is in by then.
+ *
+ * Expressed as a duration rather than a wall-clock time so it still means
+ * "after the rehearsal" if one is ever scheduled for an afternoon or a
+ * Saturday. Nothing here needs a time zone: session dates and now() are both
+ * UTC, and the difference between them is the same number of hours wherever
+ * you stand.
+ */
+const SESSION_RUNS_HOURS = 2;
+
+/**
+ * The most recent rehearsal that has actually happened.
+ *
+ * "Last rehearsal" used to mean the newest row in the table, which on a
+ * Tuesday afternoon is the rehearsal still hours away. The dashboard showed
+ * tonight's date above 0 attended, 0 pass, 0 single — figures that were not
+ * wrong so much as not yet true, sitting where last week's real ones should
+ * have been. Anyone glancing at it before the doors opened would read a
+ * collapse in attendance.
+ */
+export async function getLastFinishedSession() {
+  if (!db) return null;
+  const [row] = await db
+    .select()
+    .from(sessions)
+    .where(sql`${sessions.sessionDate} <= DATE_SUB(now(), INTERVAL ${sql.raw(String(SESSION_RUNS_HOURS))} HOUR)`)
+    .orderBy(desc(sessions.sessionDate))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function getLastSessionStats() {
   if (!db) return null;
 
-  // Get the most recent session
-  const lastSession = await db
-    .select()
-    .from(sessions)
-    .orderBy(desc(sessions.sessionDate))
-    .limit(1);
-  if (lastSession.length === 0) return null;
-
-  const sess = lastSession[0];
+  // The last rehearsal that has HAPPENED — not simply the newest row.
+  const sess = await getLastFinishedSession();
+  if (!sess) return null;
 
   // Count attendees grouped by sessionType
   const rows = await db
@@ -1234,7 +1264,12 @@ export async function getAdminStats() {
   if (!db) return { totalMembers: 0, totalSessions: 0, totalLibraryItems: 0, totalAnnouncements: 0 };
 
   const [memberCount] = await db.select({ count: sql<number>`count(*)` }).from(users);
-  const [sessionCount] = await db.select({ count: sql<number>`count(*)` }).from(sessions);
+  // "Sessions Held" counted rows, so a rehearsal created on Tuesday morning
+  // was held before anybody sang a note.
+  const [sessionCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(sessions)
+    .where(sql`${sessions.sessionDate} <= DATE_SUB(now(), INTERVAL ${sql.raw(String(SESSION_RUNS_HOURS))} HOUR)`);
   const [libraryCount] = await db.select({ count: sql<number>`count(*)` }).from(libraryItems);
   const [announcementCount] = await db.select({ count: sql<number>`count(*)` }).from(announcements);
 
@@ -2837,14 +2872,13 @@ export async function getLowPasses() {
 export async function getLastSessionIncome() {
   if (!db) return null;
 
-  const lastSession = await db
-    .select()
-    .from(sessions)
-    .orderBy(desc(sessions.sessionDate))
-    .limit(1);
-  if (lastSession.length === 0) return null;
-
-  const sess = lastSession[0];
+  // Same rule as the attendance card beside it: the rehearsal that has
+  // happened. The money window already ends at the start of the NEXT
+  // rehearsal's Brisbane day, so a pass bought on the afternoon of a
+  // rehearsal belongs to that night and is not swept into last week's total
+  // while it waits.
+  const sess = await getLastFinishedSession();
+  if (!sess) return null;
 
   // Format session date as YYYY-MM-DD (local AEST) for Square date-range query
   const d = new Date(sess.sessionDate);
