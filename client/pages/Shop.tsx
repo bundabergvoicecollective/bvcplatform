@@ -244,7 +244,7 @@ function ProductFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{existing ? "Edit Product" : "New Product"}</DialogTitle>
         </DialogHeader>
