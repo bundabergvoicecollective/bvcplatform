@@ -48,8 +48,9 @@ on:
           - push
           - invitestatus
           - resendinvites
+          - grantadmin
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending, annotatepass and resendinvites only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending, annotatepass, resendinvites and grantadmin only)"
         type: boolean
         required: false
         default: false
@@ -272,6 +273,24 @@ jobs:
       # Worth doing only because the invite page now takes the password itself;
       # before that deploy the link walked them into the same wall. Reports
       # unless `apply` is ticked, and writes to nobody else.
+      # Promotes named addresses to admin. Cannot create an account and
+      # never demotes anybody. Reports unless `apply` is ticked.
+      - name: Grant admin rights
+        if: inputs.audit == 'grantadmin'
+        env:
+          ARGS: ${{ inputs.args }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ -z "$ARGS" ]; then
+            echo "::error::Pass --emails=a@example.com,b@example.com"
+            exit 1
+          fi
+          if [ "$APPLY" = "true" ]; then
+            pnpm exec tsx scripts/grantAdmin.ts $ARGS --apply
+          else
+            pnpm exec tsx scripts/grantAdmin.ts $ARGS
+          fi
+
       - name: Resend unfinished invitations
         if: inputs.audit == 'resendinvites'
         env:
