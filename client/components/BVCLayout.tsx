@@ -56,11 +56,15 @@ const NAV_ITEMS = [
 ];
 
 // Sidebar colour tokens — pure black left panel
-const SIDEBAR_BG = "#0a0a0a";
-const SIDEBAR_BORDER = "#1f1f1f";
-const SIDEBAR_TEXT_MUTED = "#6b7280";
-const SIDEBAR_TEXT = "#d1d5db";
-const SIDEBAR_HOVER_BG = "#1a1a1a";
+const SIDEBAR_BG = "oklch(0.17 0.045 245)";
+/* A rail with a top-to-bottom fall and a wash of teal at the foot: the
+   difference between a dark panel and a surface with a light source. */
+const SIDEBAR_GRADIENT =
+  "linear-gradient(180deg, oklch(0.20 0.05 245) 0%, oklch(0.155 0.042 245) 55%, oklch(0.14 0.04 248) 100%)";
+const SIDEBAR_BORDER = "oklch(0.26 0.04 245)";
+const SIDEBAR_TEXT_MUTED = "oklch(0.62 0.02 245)";
+const SIDEBAR_TEXT = "oklch(0.84 0.015 245)";
+const SIDEBAR_HOVER_BG = "oklch(0.24 0.05 245)";
 const GOLD = "oklch(0.78 0.17 75)";
 const TEAL = "oklch(0.55 0.14 185)";
 
@@ -128,13 +132,17 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
   const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(role));
 
   const SidebarContent = () => (
-    <div className="flex flex-col h-full" style={{ background: SIDEBAR_BG }}>
+    <div className="flex flex-col h-full" style={{ background: SIDEBAR_BG, backgroundImage: SIDEBAR_GRADIENT }}>
       {/* Logo */}
       <div
         className="flex items-center gap-3 px-5 py-5 border-b"
         style={{ borderColor: SIDEBAR_BORDER }}
       >
-        <img src="/bvc-logo.webp" alt="BVC" className="h-10 w-auto" />
+        <img
+          src="/bvc-logo.webp"
+          alt="BVC"
+          className="h-10 w-auto drop-shadow-[0_2px_8px_oklch(0.78_0.17_75_/_0.35)]"
+        />
         <span
           className="font-display font-bold text-sm leading-tight"
           style={{ color: GOLD }}
@@ -158,21 +166,38 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
               href={href}
               onClick={() => setSidebarOpen(false)}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group"
+                "relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium group",
+                "[transition:background-color_var(--dur-fast)_var(--ease-bvc),color_var(--dur-fast)_var(--ease-bvc),transform_var(--dur-fast)_var(--ease-bvc)]",
+                "active:scale-[0.98]",
+                active
+                  ? "font-semibold [box-shadow:0_4px_14px_-4px_oklch(0.78_0.17_75_/_0.55)]"
+                  : "hover:bg-[oklch(0.24_0.05_245)]",
               )}
               style={
                 active
-                  ? { background: GOLD, color: "#0a0a0a" }
+                  ? {
+                      backgroundImage:
+                        "linear-gradient(135deg, oklch(0.84 0.16 80) 0%, oklch(0.76 0.17 72) 100%)",
+                      color: "oklch(0.18 0.05 245)",
+                    }
                   : { color: SIDEBAR_TEXT }
               }
-              onMouseEnter={(e) => {
-                if (!active) (e.currentTarget as HTMLElement).style.background = SIDEBAR_HOVER_BG;
-              }}
-              onMouseLeave={(e) => {
-                if (!active) (e.currentTarget as HTMLElement).style.background = "transparent";
-              }}
             >
-              <Icon className="w-4 h-4 shrink-0" />
+              {/* The marker on the rail itself. Colour alone carries the
+                  current page otherwise, and gold on navy is not a
+                  difference everybody can see. */}
+              {active && (
+                <span
+                  className="absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full"
+                  style={{ background: GOLD }}
+                />
+              )}
+              <Icon
+                className={cn(
+                  "w-4 h-4 shrink-0 [transition:transform_var(--dur)_var(--ease-bvc)]",
+                  !active && "group-hover:scale-110",
+                )}
+              />
               <span className="flex-1">{label}</span>
               {badgeCount > 0 && (
                 <span
@@ -229,11 +254,11 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
   );
 
   return (
-    <div className="flex min-h-screen" style={{ background: "oklch(0.97 0.005 240)" }}>
+    <div className="flex min-h-screen">
       {/* Desktop sidebar */}
       <aside
         className="hidden md:flex flex-col w-60 shrink-0 fixed inset-y-0 left-0 z-30"
-        style={{ background: SIDEBAR_BG }}
+        style={{ background: SIDEBAR_BG, backgroundImage: SIDEBAR_GRADIENT }}
       >
         <SidebarContent />
       </aside>
@@ -242,12 +267,12 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
       {sidebarOpen && (
         <div className="md:hidden fixed inset-0 z-40 flex">
           <div
-            className="fixed inset-0 bg-black/60"
+            className="fixed inset-0 bg-[oklch(0.14_0.04_245_/_0.6)] supports-[backdrop-filter:blur(0px)]:backdrop-blur-sm animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
           <aside
-            className="relative z-50 w-64 flex flex-col"
-            style={{ background: SIDEBAR_BG }}
+            className="relative z-50 w-64 flex flex-col animate-slide-in-left [box-shadow:var(--shadow-overlay)]"
+            style={{ background: SIDEBAR_BG, backgroundImage: SIDEBAR_GRADIENT }}
           >
             <button
               className="absolute top-4 right-4"
@@ -265,10 +290,15 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
       <div className="flex-1 md:ml-60 flex flex-col min-h-screen">
         {/* Mobile topbar */}
         <header
-          className="md:hidden flex items-center justify-between px-4 py-3 sticky top-0 z-20"
-          style={{ background: SIDEBAR_BG }}
+          className="md:hidden flex items-center justify-between px-4 py-3 sticky top-0 z-20 glass border-b"
+          style={{ borderColor: "oklch(0.30 0.04 245 / 0.6)" }}
         >
-          <button onClick={() => setSidebarOpen(true)} style={{ color: GOLD }}>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+            className="p-1.5 -ml-1.5 rounded-xl active:scale-90 [transition:transform_var(--dur-fast)_var(--ease-bvc),background-color_var(--dur-fast)_var(--ease-bvc)] active:bg-white/10"
+            style={{ color: GOLD }}
+          >
             <Menu className="w-6 h-6" />
           </button>
           <img src="/bvc-logo.webp" alt="BVC" className="h-8 w-auto" />
@@ -276,14 +306,19 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
               kind of unread — new music, documents, performances — and the
               announcements page can only clear announcements, so tapping the
               bell used to leave most of the count exactly where it was. */}
-          <Link href="/notifications" className="relative" aria-label={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"} style={{ color: GOLD }}>
+          <Link
+            href="/notifications"
+            className="relative p-1.5 -mr-1.5 rounded-xl active:scale-90 [transition:transform_var(--dur-fast)_var(--ease-bvc),background-color_var(--dur-fast)_var(--ease-bvc)] active:bg-white/10"
+            aria-label={unreadCount > 0 ? `${unreadCount} unread` : "Notifications"}
+            style={{ color: GOLD }}
+          >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
               <span
                 // min-width rather than a fixed 16px square: at two digits a
                 // fixed square clipped the number, and a member with twelve
                 // unread saw "1".
-                className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 text-[11px] leading-none rounded-full flex items-center justify-center font-bold"
+                className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 text-[11px] leading-none rounded-full flex items-center justify-center font-bold animate-badge-pop [box-shadow:0_0_0_2px_oklch(0.17_0.045_245)]"
                 style={{ background: TEAL, color: "white" }}
               >
                 {unreadCount > 99 ? "99+" : unreadCount}
@@ -307,7 +342,16 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
         <AdminViewingAsMember user={user} />
         <NotificationPrompt />
 
-        <main className={noPadding ? "flex-1 flex flex-col overflow-hidden" : "flex-1 p-6 min-w-0 overflow-x-clip"}>
+        {/* Keyed on the route so the animation re-runs on every navigation:
+            moving between pages becomes a movement rather than a swap. */}
+        <main
+          key={location}
+          className={
+            noPadding
+              ? "flex-1 flex flex-col overflow-hidden"
+              : "flex-1 p-4 sm:p-6 min-w-0 overflow-x-clip page-enter"
+          }
+        >
           {children}
         </main>
       </div>
