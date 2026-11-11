@@ -1,8 +1,8 @@
 import BVCLayout from "@/components/BVCLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Smartphone } from "lucide-react";
-import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { Smartphone, BellOff } from "lucide-react";
+import { usePushNotifications, howToUnblock } from "@/hooks/usePushNotifications";
 import NotificationList, {
   NotificationBulkActions,
   useNotificationActions,
@@ -12,6 +12,7 @@ export default function Notifications() {
   const actions = useNotificationActions();
   const { unreadCount } = actions;
   const push = usePushNotifications();
+  const blocked = push.permission === "denied";
 
   return (
     <BVCLayout>
@@ -58,34 +59,56 @@ export default function Notifications() {
           </Card>
         )}
 
-        {/* Push notification opt-in card */}
+        {/* Push notification opt-in card.
+
+            The Turn on button used to be disabled whenever the browser had
+            been told no, with nothing on screen to say why. Members reported
+            it as a button that would not work — which is exactly what a
+            greyed-out button with no message is. A control nobody can press
+            and nobody can explain is worse than no control.
+
+            So the blocked case gets words and the steps for THIS phone
+            instead of a dead button, and the button is never disabled for a
+            reason the member cannot see. */}
         {push.supported && !push.needsInstall && (
-          <Card className="border-0 shadow-sm" style={{ background: "oklch(0.97 0.02 185)" }}>
-            <CardContent className="p-4 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "oklch(0.35 0.10 185)" }}>
-                  <Smartphone className="w-4 h-4 text-white" />
+          <Card className="border-0 shadow-sm" style={{ background: blocked ? "oklch(0.97 0.03 60)" : "oklch(0.97 0.02 185)" }}>
+            <CardContent className="p-4 flex items-start justify-between gap-4 flex-wrap sm:flex-nowrap">
+              <div className="flex items-start gap-3 min-w-0">
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: blocked ? "oklch(0.50 0.13 60)" : "oklch(0.35 0.10 185)" }}
+                >
+                  {blocked ? <BellOff className="w-4 h-4 text-white" /> : <Smartphone className="w-4 h-4 text-white" />}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium text-sm" style={{ color: "oklch(0.22 0.07 240)" }}>
-                    {push.subscribed ? "Push notifications are on" : "Enable push notifications"}
+                    {blocked
+                      ? "Notifications are blocked on this phone"
+                      : push.subscribed
+                        ? "Push notifications are on"
+                        : "Enable push notifications"}
                   </p>
-                  <p className="text-xs mt-0.5" style={{ color: "oklch(0.52 0.03 240)" }}>
-                    {push.subscribed
-                      ? "You'll be notified even when the app is closed."
-                      : "New music, announcements, performances and documents — even when the app is closed."}
+                  <p className="text-xs mt-0.5 leading-snug" style={{ color: "oklch(0.52 0.03 240)" }}>
+                    {blocked
+                      ? <>Your phone was told no at some point, and it will not ask again. {howToUnblock()} Then come back here — this page notices by itself.</>
+                      : push.subscribed
+                        ? "You'll be notified even when the app is closed."
+                        : "New music, announcements, performances and documents — even when the app is closed."}
                   </p>
                 </div>
               </div>
-              <Button
-                size="sm"
-                variant={push.subscribed ? "outline" : "default"}
-                disabled={push.loading || push.permission === "denied"}
-                onClick={push.subscribed ? push.unsubscribe : push.subscribe}
-                style={push.subscribed ? {} : { background: "oklch(0.35 0.10 185)", color: "white" }}
-              >
-                {push.loading ? "..." : push.subscribed ? "Turn off" : "Turn on"}
-              </Button>
+              {!blocked && (
+                <Button
+                  size="sm"
+                  variant={push.subscribed ? "outline" : "default"}
+                  // Only ever disabled while a tap is actually being handled.
+                  disabled={push.loading}
+                  onClick={push.subscribed ? push.unsubscribe : push.subscribe}
+                  style={push.subscribed ? {} : { background: "oklch(0.35 0.10 185)", color: "white" }}
+                >
+                  {push.loading ? "Working…" : push.subscribed ? "Turn off" : "Turn on"}
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Bell, BellOff, Share, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { usePushNotifications, howToUnblock } from "@/hooks/usePushNotifications";
 
 /**
  * The one tap that cannot be done for them.
@@ -99,9 +99,11 @@ export default function NotificationPrompt() {
               Notifications are blocked for this app
             </p>
             <p className="text-xs mt-1 leading-snug" style={{ color: "oklch(0.40 0.04 240)" }}>
-              Your phone was told no at some point, and it will not ask again. To turn
-              them back on, open <strong>Settings</strong> → <strong>Notifications</strong>{" "}
-              → <strong>BVC</strong> and allow them.
+              {/* These steps used to be the iPhone ones for everybody, so
+                  every Android member was told to open an iOS settings screen
+                  that does not exist on their phone. */}
+              Your phone was told no at some point, and it will not ask again.{" "}
+              {howToUnblock()}
             </p>
           </>
         ) : (
