@@ -15,10 +15,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --radius: 0.625rem;
+  --radius: 0.875rem;
 
   /* Neutral base */
-  --color-background: oklch(0.98 0.005 240);
+  --color-background: oklch(0.975 0.006 240);
   --color-foreground: oklch(0.18 0.04 240);
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.18 0.04 240);
@@ -41,7 +41,7 @@
   --color-muted-foreground: oklch(0.52 0.03 240);
 
   --color-destructive: oklch(0.577 0.245 27.325);
-  --color-border: oklch(0.88 0.01 240);
+  --color-border: oklch(0.91 0.008 240);
   --color-input: oklch(0.88 0.01 240);
   --color-ring: oklch(0.55 0.14 185);
 
@@ -62,6 +62,32 @@
   --color-sidebar-ring: oklch(0.55 0.14 185);
 }
 
+/* ── Elevation and motion ──────────────────────────────────────────────────
+   Shadows are tinted with the brand navy rather than black. A pure-black
+   shadow on a tinted page reads as grey dirt under the card; a shadow that
+   shares the hue of the surface reads as depth. Two layers each: a tight
+   contact shadow and a wide soft one, which is what separates a surface that
+   looks lifted from one that looks outlined.                               */
+:root {
+  --shadow-sm: 0 1px 2px oklch(0.22 0.07 240 / 0.05),
+               0 1px 3px oklch(0.22 0.07 240 / 0.04);
+  --shadow-card: 0 1px 2px oklch(0.22 0.07 240 / 0.04),
+                 0 4px 16px -4px oklch(0.22 0.07 240 / 0.08);
+  --shadow-raised: 0 2px 4px oklch(0.22 0.07 240 / 0.05),
+                   0 12px 28px -8px oklch(0.22 0.07 240 / 0.14);
+  --shadow-overlay: 0 8px 12px -6px oklch(0.22 0.07 240 / 0.12),
+                    0 24px 56px -12px oklch(0.22 0.07 240 / 0.26);
+
+  /* One easing curve everywhere. Mixed curves are the difference between an
+     interface that feels designed and one that feels assembled. This one
+     starts fast and settles — the motion of something with a little weight,
+     which is what makes an interaction feel physical rather than animated. */
+  --ease-bvc: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --dur-slow: 420ms;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -69,10 +95,56 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     min-height: 100vh;
+    /* A barely-there wash of brand colour in the corners. At this strength it
+       is not a gradient anybody notices; it is why the page stops reading as
+       a flat grey sheet. */
+    background-image:
+      radial-gradient(60rem 40rem at 110% -10%, oklch(0.55 0.14 185 / 0.055), transparent 60%),
+      radial-gradient(50rem 35rem at -10% 110%, oklch(0.78 0.17 75 / 0.05), transparent 60%);
+    background-attachment: fixed;
   }
   html, body, #root {
     min-height: 100vh;
   }
+
+  /* The grey flash on tap that marks a web page out as a web page. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Keyboard users get a ring; mouse and touch users do not get one stuck on
+     a button they just pressed. */
+  :focus-visible {
+    outline: 2px solid oklch(0.55 0.14 185 / 0.55);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: oklch(0.78 0.17 75 / 0.3);
+  }
+
+  /* Headings in the display face, set tight. Playfair at default tracking
+     and leading looks like a document; closed up it looks like a masthead. */
+  .font-display {
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+  }
+
+  /* A scrollbar that belongs to this app rather than to the operating
+     system. Firefox gets the two-value form; everything else the thumb. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.80 0.02 240) transparent;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.84 0.015 240);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: oklch(0.72 0.02 240); }
 }
 
 /* ── Utility overrides ─────────────────────────────────────────────────────── */
@@ -103,13 +175,79 @@
   color: oklch(0.55 0.14 185);
 }
 
-/* ── Animations ────────────────────────────────────────────────────────────── */
+/* ── Animations ────────────────────────────────────────────────────────────
+   Every one of these is inside prefers-reduced-motion: no-preference. A
+   member who has asked their phone to stop moving things has usually asked
+   for a reason — motion sickness, vertigo, a vestibular condition — and an
+   app that ignores it is not stylish, it is unusable.                      */
 @media (prefers-reduced-motion: no-preference) {
   .animate-fade-in {
-    animation: fadeIn 0.25s cubic-bezier(0.23, 1, 0.32, 1) both;
+    animation: fadeIn var(--dur) var(--ease-bvc) both;
   }
   .animate-slide-up {
-    animation: slideUp 0.3s cubic-bezier(0.23, 1, 0.32, 1) both;
+    animation: slideUp var(--dur-slow) var(--ease-bvc) both;
+  }
+
+  /* The page itself arrives. Keyed on the route in BVCLayout, so moving
+     between pages is a movement rather than a swap. */
+  .page-enter {
+    animation: pageEnter var(--dur-slow) var(--ease-bvc) both;
+  }
+
+  /* Cards come in one after another rather than all at once. The delays are
+     deliberately short and capped: a stagger you have to wait for is a
+     stagger that has outstayed its welcome. */
+  .stagger > * {
+    animation: riseIn var(--dur-slow) var(--ease-bvc) both;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 45ms; }
+  .stagger > *:nth-child(3) { animation-delay: 90ms; }
+  .stagger > *:nth-child(4) { animation-delay: 135ms; }
+  .stagger > *:nth-child(5) { animation-delay: 170ms; }
+  .stagger > *:nth-child(n+6) { animation-delay: 200ms; }
+
+  /* Loading skeletons that sweep rather than blink. */
+  .animate-badge-pop { animation: badgePop var(--dur) var(--ease-bvc) both; }
+  .animate-slide-in-left { animation: slideInLeft var(--dur) var(--ease-bvc) both; }
+
+  .shimmer {
+    background: linear-gradient(
+      100deg,
+      oklch(0.94 0.008 240) 30%,
+      oklch(0.97 0.006 240) 50%,
+      oklch(0.94 0.008 240) 70%
+    );
+    background-size: 220% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+}
+
+/* The lift on a card you can press. Not inside the reduced-motion block as a
+   transition — a colour or shadow change on hover is not the kind of motion
+   that makes anybody ill — but the translate is, so that part is guarded. */
+.lift {
+  transition: box-shadow var(--dur) var(--ease-bvc),
+              transform var(--dur) var(--ease-bvc),
+              border-color var(--dur) var(--ease-bvc);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .lift:hover { transform: translateY(-2px); }
+  .lift:active { transform: translateY(0); }
+}
+.lift:hover { box-shadow: var(--shadow-raised); }
+
+/* Glass: used on the sticky mobile header, where content scrolls underneath
+   and a solid bar would look pasted on. Falls back to a solid colour where
+   backdrop-filter is unsupported, which is why the background is set first. */
+.glass {
+  background: oklch(0.18 0.05 240 / 0.86);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass {
+    background: oklch(0.18 0.05 240 / 0.72);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    backdrop-filter: blur(14px) saturate(160%);
   }
 }
 
@@ -120,6 +258,27 @@
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes badgePop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes shimmer {
+  from { background-position: 180% 0; }
+  to   { background-position: -40% 0; }
 }
 
 /* ── Mobile input visibility fix ──────────────────────────────────────────── */

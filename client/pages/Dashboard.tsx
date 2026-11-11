@@ -74,14 +74,14 @@ function StatCard({
     // instance has scaled down. This navigates in place, instantly.
     return (
       <Link href={href} className="block">
-        <Card className="border-0 shadow-sm cursor-pointer transition-shadow hover:shadow-md active:scale-[0.98]">
+        <Card className="border-0 cursor-pointer lift active:scale-[0.98] h-full">
           {inner}
         </Card>
       </Link>
     );
   }
   return (
-    <Card className="border-0 shadow-sm">
+    <Card className="border-0 h-full">
       {inner}
     </Card>
   );
@@ -747,13 +747,13 @@ function AdminDashboard() {
 
       {/* Top stats row */}
       {isLoading ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-24 rounded-xl bg-gray-100 animate-pulse" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
           <StatCard
             icon={Users}
             label="Total Members"
@@ -1092,13 +1092,13 @@ function MemberDashboard() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-24 rounded-xl bg-gray-100 animate-pulse" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
           <StatCard
             icon={Calendar}
             label="Sessions Attended"
