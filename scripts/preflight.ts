@@ -191,14 +191,32 @@ async function main() {
         WHERE DATE(DATE_ADD(sessionDate, INTERVAL 10 HOUR)) = ?`,
       [today.d],
     );
+    // A missing session row only matters on a rehearsal day. The check used
+    // to demand one every day, so it failed on the six days a week when the
+    // choir does not sing — and a check that cries wolf six times a week is
+    // one people stop reading, which is how the real failure gets missed.
+    //
+    // Rehearsals are Tuesday. A session row on any other day is somebody
+    // creating one deliberately — a workshop, a rescheduled night — and is
+    // reported rather than ignored, because the point of this line is to say
+    // whether tonight can be marked, not to police the calendar.
+    const isRehearsalDay = today.dow === "Tuesday";
     if (tonight.length) {
-      ok("tonight's rehearsal exists", `#${tonight[0].id} "${tonight[0].title}" at ${tonight[0].t}`);
-    } else {
+      ok(
+        isRehearsalDay ? "tonight's rehearsal exists" : "a session exists today",
+        `#${tonight[0].id} "${tonight[0].title}" at ${tonight[0].t}`,
+      );
+    } else if (isRehearsalDay) {
       bad(
         "critical",
         "tonight's rehearsal",
         `no session row for ${today.dow} ${today.d} — attendance cannot be marked until one is created under Attendance → New Session`,
       );
+    } else {
+      // Not a pass with a caveat and not a warning: there is nothing wrong.
+      // Said out loud all the same, so the line is never silently absent and
+      // nobody wonders whether the check ran.
+      ok("tonight's rehearsal", `not a rehearsal day — ${today.dow} ${today.d}, rehearsals are Tuesday`);
     }
 
     // The admin count is here because "who can see the admin pages?" had no
