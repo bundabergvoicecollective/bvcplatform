@@ -8,6 +8,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { verifySquareWebhook } from "../square";
+import { verifyUnsubscribeToken } from "../campaignEmail";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { asyncRoute } from "./asyncRoute";
 import { registerAuthRoutes } from "./auth";
@@ -25,6 +26,7 @@ import {
   getActivePassForUser,
   getAllMembers,
   getPassOrderByStripeSession,
+  optOutOfCampaignEmail,
   findRecentSquareOrder,
   claimSquareOrder,
   topUpPass,
@@ -824,6 +826,76 @@ async function grantFromUnattributedPayment(payment: Record<string, unknown>): P
     } catch (err: any) {
       console.error("[Upload/Document]", err);
       return res.status(500).json({ error: err.message ?? "Upload failed" });
+    }
+  });
+
+  // ── Unsubscribe from campaign emails ─────────────────────────────────────
+  //
+  // GET shows a page with a Confirm button; only POST unsubscribes. Mail
+  // security scanners open every link in a message before the person does,
+  // and a link that unsubscribed on GET would quietly take members off the
+  // list without them ever seeing it. The one-click button Gmail and Apple
+  // Mail show (List-Unsubscribe-Post) sends a POST, so that still takes one
+  // tap. The token is an HMAC under a key derived only for this — it cannot
+  // be used as a session. See campaignEmail.ts.
+  const unsubscribePage = (title: string, body: string, form = "") => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${title} — Bundaberg Voice Collective</title></head>
+<body style="margin:0;background:#f5f5f0;font-family:Georgia,serif;color:#333;">
+<div style="max-width:480px;margin:48px auto;padding:0 16px;">
+<div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);">
+<div style="background:#0e1a2b;padding:24px;text-align:center;color:#c9922a;font-size:12px;font-weight:bold;letter-spacing:3px;text-transform:uppercase;">Bundaberg Voice Collective</div>
+<div style="padding:28px 32px;font-size:18px;line-height:1.6;"><h1 style="font-size:22px;margin:0 0 12px;color:#0e1a2b;">${title}</h1>${body}${form}</div>
+</div></div></body></html>`;
+
+  const unsubscribeParams = (req: express.Request) => {
+    const userId = Number(req.query.u);
+    const token = String(req.query.t ?? "");
+    let valid = false;
+    try {
+      valid = verifyUnsubscribeToken(userId, token);
+    } catch (err) {
+      console.error("[Unsubscribe] cannot verify links:", err);
+    }
+    return { userId, token, valid };
+  };
+
+  const badLink = unsubscribePage(
+    "This link doesn't work",
+    "<p>The unsubscribe link looks incomplete. Please try the link in the email again, or let Christie or Andy know and they'll take you off the list.</p>",
+  );
+
+  app.get("/api/unsubscribe", (req, res) => {
+    const { userId, token, valid } = unsubscribeParams(req);
+    res.setHeader("Cache-Control", "no-store");
+    if (!valid) return res.status(400).send(badLink);
+    res.send(unsubscribePage(
+      "Unsubscribe from update emails?",
+      "<p>You'll stop getting update emails like this one, such as reminders when your pass runs out.</p>" +
+        "<p>You'll still get receipts, password emails and anything about your account.</p>",
+      `<form method="post" action="/api/unsubscribe?u=${userId}&t=${encodeURIComponent(token)}" style="margin-top:24px;text-align:center;">
+<button type="submit" style="background:#0e1a2b;color:#fff;border:0;border-radius:8px;padding:14px 28px;font-size:17px;font-family:inherit;cursor:pointer;">Yes, unsubscribe me</button></form>`,
+    ));
+  });
+
+  app.post("/api/unsubscribe", async (req, res) => {
+    const { userId, valid } = unsubscribeParams(req);
+    res.setHeader("Cache-Control", "no-store");
+    if (!valid) return res.status(400).send(badLink);
+    try {
+      await optOutOfCampaignEmail(userId);
+      console.log(`[Unsubscribe] member #${userId} opted out of campaign emails`);
+      res.send(unsubscribePage(
+        "You're unsubscribed",
+        "<p>You won't get any more update emails from us. You'll still get receipts and account emails.</p>" +
+          "<p>Changed your mind? Just let Christie or Andy know at rehearsal.</p>",
+      ));
+    } catch (err) {
+      console.error("[Unsubscribe] failed for member", userId, err);
+      res.status(500).send(unsubscribePage(
+        "Something went wrong",
+        "<p>We couldn't save that just now. Please try again in a minute, or let Christie or Andy know and they'll take you off the list.</p>",
+      ));
     }
   });
 

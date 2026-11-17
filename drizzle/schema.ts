@@ -593,3 +593,51 @@ export const userActivityLog = mysqlTable("user_activity_log", {
 });
 export type UserActivityLog = typeof userActivityLog.$inferSelect;
 export type InsertUserActivityLog = typeof userActivityLog.$inferInsert;
+
+// ─── Email campaigns ─────────────────────────────────────────────────────────
+//
+// Three NEW tables rather than columns on `users`. Every read of users lists
+// all of its columns explicitly, so a column declared here but missing from
+// the database would fail every sign-in and every page — and the schema step
+// in this repo has, before now, reported success while applying nothing. A
+// missing new table breaks only the page that uses it.
+
+/** One email sent to a chosen group of members. */
+export const emailCampaigns = mysqlTable("email_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  body: text("body").notNull(),
+  /** Which audience rule chose the recipients, e.g. "multipass_empty". */
+  audience: varchar("audience", { length: 64 }).notNull(),
+  createdBy: int("createdBy").notNull(),
+  recipientCount: int("recipientCount").default(0).notNull(),
+  sentCount: int("sentCount").default(0).notNull(),
+  failedCount: int("failedCount").default(0).notNull(),
+  status: mysqlEnum("status", ["sending", "sent"]).default("sending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  finishedAt: timestamp("finishedAt"),
+});
+export type EmailCampaign = typeof emailCampaigns.$inferSelect;
+
+/** Who a campaign went to, and whether the mail provider accepted it. */
+export const emailCampaignRecipients = mysqlTable("email_campaign_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  userId: int("userId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  status: mysqlEnum("status", ["sent", "failed"]).notNull(),
+  error: text("error"),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
+});
+export type EmailCampaignRecipient = typeof emailCampaignRecipients.$inferSelect;
+
+/**
+ * Members who have asked not to receive campaign emails. Australian law (the
+ * Spam Act) requires a working unsubscribe on these. It never affects
+ * receipts, password resets or invitations.
+ */
+export const emailOptOuts = mysqlTable("email_opt_outs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});

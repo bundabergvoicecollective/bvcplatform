@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import {
   Users, CalendarDays, Megaphone, Music, CreditCard, MessageSquare,
   Plus, Trash2, Edit2, Shield, ShieldOff, CheckCircle, XCircle,
-  BarChart3, Upload, Bell, Settings, Eye, DollarSign, AlertTriangle, History, Search, Filter, Download
+  BarChart3, Upload, Bell, Settings, Eye, DollarSign, AlertTriangle, History, Search, Filter, Download, Mail
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -22,6 +22,7 @@ import {
 import { useState } from "react";
 import { useLocation } from "wouter";
 import BVCLayout from "@/components/BVCLayout";
+import EmailCampaignsTab from "@/components/EmailCampaignsTab";
 import { getDisplayName } from "@shared/const";
 
 const GOLD = "oklch(0.78 0.17 75)";
@@ -1010,6 +1011,7 @@ export default function AdminPanel() {
             <TabsTrigger value="orders" className="text-xs"><BarChart3 className="w-3.5 h-3.5 mr-1" />Orders</TabsTrigger>
             <TabsTrigger value="financial" className="text-xs"><DollarSign className="w-3.5 h-3.5 mr-1" />Financial Members</TabsTrigger>
             <TabsTrigger value="activity" className="text-xs"><History className="w-3.5 h-3.5 mr-1" />Activity Log</TabsTrigger>
+            <TabsTrigger value="email" className="text-xs"><Mail className="w-3.5 h-3.5 mr-1" />Email</TabsTrigger>
           </TabsList>
           <div className="mt-4">
             <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
@@ -1021,6 +1023,7 @@ export default function AdminPanel() {
             <TabsContent value="orders"><OrdersTab /></TabsContent>
             <TabsContent value="financial"><FinancialMembersTab /></TabsContent>
             <TabsContent value="activity"><ActivityLogTab /></TabsContent>
+            <TabsContent value="email"><EmailCampaignsTab /></TabsContent>
           </div>
         </Tabs>
       </div>
