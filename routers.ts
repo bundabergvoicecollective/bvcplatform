@@ -90,6 +90,7 @@ import {
   getAllSessionStats,
   createManualMember,
   recordCashPayment,
+  findRecentSquareOrder,
   recordDoorPayment,
   updateUserProfile,
   listLiveStreams,
@@ -379,6 +380,9 @@ const coreRouter = router({
           // left out, it behaves exactly as before and records cash.
           paymentChannel: z.enum(["cash", "eft", "card", "other"]).optional(),
           notes: z.string().optional(),
+          // Set when the admin has been told a matching card payment is
+          // already on record and has confirmed this is a second one.
+          allowDuplicate: z.boolean().optional(),
           // Which rehearsal the money was taken at. The form sends the one it
           // is showing; left out, recordCashPayment works it out from today.
           sessionId: z.number().optional(),
@@ -398,6 +402,27 @@ const coreRouter = router({
         // counted from this table like cash, while still being reported as EFT.
         const channel = isComp ? "complimentary" : (input.paymentChannel ?? "cash");
         const rail = isComp ? "complimentary" : channel === "card" ? "square" : "cash";
+
+        // A tap on the Square reader may already be here: Square's webhook
+        // matches it to a member by email when it can. Recording it again by
+        // hand would give them the sessions twice, and nothing on the screen
+        // would say so - their balance would just be five too high.
+        if (rail === "square" && !input.allowDuplicate) {
+          const existing = await findRecentSquareOrder(input.userId, product.amountCents);
+          if (existing) {
+            const when = new Date(existing.createdAt).toLocaleString("en-AU", {
+              timeZone: "Australia/Brisbane",
+              weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
+            });
+            const how = existing.stripeSessionId ? "matched automatically from Square" : "entered by hand";
+            throw new TRPCError({
+              code: "CONFLICT",
+              message:
+                `A $${(product.amountCents / 100).toFixed(2)} card payment for this member is already recorded ` +
+                `(${when}, ${how}). Recording it again would add the sessions twice.`,
+            });
+          }
+        }
 
         const result = await recordCashPayment({
           userId: input.userId,

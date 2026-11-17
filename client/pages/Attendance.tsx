@@ -728,9 +728,12 @@ function MemberAttendanceRow({
             Single session — $16 not recorded:
           </span>
           {([
+            // "EFT" at a rehearsal means a card tapped on the reader, which is
+            // the one that must be filed as Square. Labelled for what each
+            // button actually records, not the server's value names.
             ["cash", "Cash"],
-            ["eft", "EFT"],
-            ["card", "Card"],
+            ["card", "Card / EFTPOS"],
+            ["eft", "Bank transfer"],
           ] as const).map(([channel, label]) => (
             <button
               key={channel}

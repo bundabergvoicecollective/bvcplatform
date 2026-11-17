@@ -25,6 +25,8 @@ import {
   getActivePassForUser,
   getAllMembers,
   getPassOrderByStripeSession,
+  findRecentSquareOrder,
+  claimSquareOrder,
   topUpPass,
   updatePassOrderStatus,
   grantLiveStreamAccess,
@@ -143,6 +145,20 @@ async function grantFromUnattributedPayment(payment: Record<string, unknown>): P
         `No pass has been granted. Record it against the right member under\n` +
         `Admin → Members if it was a pass purchase.`,
     }).catch(() => {});
+    return;
+  }
+
+  // An admin may already have recorded this tap by hand: they saw the money
+  // go through on the reader and did not wait for the platform to catch up,
+  // or Square's notification arrived late. Granting now would give the member
+  // the same sessions twice. Instead, put Square's payment id on the order
+  // they typed in, so this payment and every retry of it read as recorded.
+  const handEntered = await findRecentSquareOrder(member.id, amountCents, { handEnteredOnly: true });
+  if (handEntered) {
+    await claimSquareOrder(handEntered.id, paymentId);
+    console.log(
+      `[Square Webhook] Payment ${paymentId} matches order #${handEntered.id}, already recorded by hand - no second grant`,
+    );
     return;
   }
 
