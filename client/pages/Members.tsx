@@ -1685,17 +1685,43 @@ export default function Members() {
           </Card>
         ) : (
           <Card className="border-0 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
+            {/*
+              The column headings stay put while the list scrolls. Seventy-odd
+              members is well past a screenful, and two of these columns are
+              bare numbers — "11" under nothing at all could be sessions
+              remaining or sessions attended, which are very different things
+              to get wrong when you are deciding whether somebody owes money.
+
+              THE HEADER STICKS TO THIS BOX, NOT THE WINDOW. The box has to be
+              the thing that scrolls, because `overflow-x-auto` (needed, as
+              this one table serves phones too and there is no card layout for
+              it) already makes this div a scroll container in BOTH axes — CSS
+              promotes the other axis to `auto` as soon as one is. A header set
+              to stick to the window would therefore anchor itself to a div
+              that never scrolls vertically, and simply never move. Giving the
+              div a height fixes that, and avoids two further problems: no
+              fighting with the app's own sticky header for the top of the
+              screen, and no reliance on `overflow: clip`, which iOS did not
+              support until 16.
+
+              `sticky` sits on each th rather than on the thead or the tr,
+              which is the only placement older Safari honours, and each
+              carries its own background — a transparent sticky header has the
+              rows sliding visibly underneath it.
+            */}
+            <div className="overflow-auto max-h-[70svh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "oklch(0.22 0.07 240)" }}>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Member</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Phone</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Role</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Member Since</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Sessions Remaining</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Sessions Attended</th>
-                    <th className="text-left px-4 py-3 font-semibold text-white">Actions</th>
+                    {["Member", "Phone", "Role", "Member Since", "Sessions Remaining", "Sessions Attended", "Actions"].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left px-4 py-3 font-semibold text-white sticky top-0 z-10"
+                        style={{ background: "oklch(0.22 0.07 240)" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
