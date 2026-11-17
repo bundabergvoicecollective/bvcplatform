@@ -35,6 +35,9 @@ import {
   galleryComments,
   galleryMedia,
   userActivityLog,
+  emailCampaigns,
+  emailCampaignRecipients,
+  emailOptOuts,
 } from "./drizzle/schema";
 import { ENV } from "./_core/env";
 import { calculateSessionAttendanceStats, type AttendanceCategory } from "./attendanceStats";
@@ -3927,4 +3930,132 @@ export async function recordDoorPayment(data: {
   }).catch(() => {});
 
   return { ok: true as const };
+}
+
+
+// ─── Email campaigns ─────────────────────────────────────────────────────────
+
+/**
+ * Members whose multi-session pass has run out — the people a "time to top
+ * up" email is for.
+ *
+ * IN: active members with an email address and nothing left on any pass, who
+ * have either bought a 5- or 10-pass (a paid order, by any method) or held a
+ * pass of five sessions or more. The second half catches passes assigned by
+ * hand and paper cards carried over from before the platform, which have no
+ * order behind them but were multi-passes all the same.
+ *
+ * OUT: anybody who has only ever paid by the session. A single session never
+ * creates a pass, so they have no pass history at all. Also out: a small
+ * welcome grant of a few sessions on joining, which is not a pass they bought.
+ *
+ * Members who have unsubscribed are returned but flagged, so the page can say
+ * how many were left out and why rather than letting them silently vanish.
+ */
+export async function getMultipassEmptyAudience() {
+  if (!db) return [];
+  const remaining = sql<number>`COALESCE((SELECT SUM(p.remainingSessions) FROM passes p WHERE p.userId = ${users.id} AND p.active = 1), 0)`;
+  const boughtMulti = sql<number>`(SELECT COUNT(*) FROM pass_orders o WHERE o.userId = ${users.id} AND o.status = 'paid' AND o.passType IN ('5-pass', '10-pass'))`;
+  const biggestPass = sql<number>`COALESCE((SELECT MAX(p.totalSessions) FROM passes p WHERE p.userId = ${users.id}), 0)`;
+  const lastPassAt = sql<string | null>`(SELECT DATE_FORMAT(DATE_ADD(MAX(p.assignedAt), INTERVAL 10 HOUR), '%Y-%m-%d') FROM passes p WHERE p.userId = ${users.id})`;
+  const lastEmailedAt = sql<string | null>`(SELECT DATE_FORMAT(DATE_ADD(MAX(r.sentAt), INTERVAL 10 HOUR), '%Y-%m-%d') FROM email_campaign_recipients r WHERE r.userId = ${users.id} AND r.status = 'sent')`;
+  const optedOut = sql<number>`EXISTS (SELECT 1 FROM email_opt_outs x WHERE x.userId = ${users.id})`;
+
+  const rows = await db
+    .select({
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      name: users.name,
+      email: users.email,
+      remaining,
+      boughtMulti,
+      biggestPass,
+      lastPassAt,
+      lastEmailedAt,
+      optedOut,
+    })
+    .from(users)
+    .where(and(
+      eq(users.status, "active"),
+      sql`${users.email} IS NOT NULL AND TRIM(${users.email}) <> ''`,
+      sql`${remaining} = 0`,
+      sql`(${boughtMulti} > 0 OR ${biggestPass} >= 5)`,
+    ))
+    .orderBy(users.firstName, users.lastName);
+
+  return rows.map((r) => ({
+    ...r,
+    boughtMulti: Number(r.boughtMulti),
+    biggestPass: Number(r.biggestPass),
+    optedOut: Boolean(Number(r.optedOut)),
+  }));
+}
+
+export async function createEmailCampaign(data: {
+  subject: string; body: string; audience: string; createdBy: number; recipientCount: number;
+}) {
+  if (!db) throw new Error("DB unavailable");
+  const [result] = await db.insert(emailCampaigns).values({ ...data, status: "sending" });
+  return Number(result.insertId);
+}
+
+export async function recordCampaignRecipient(data: {
+  campaignId: number; userId: number; email: string; status: "sent" | "failed"; error?: string;
+}) {
+  if (!db) return;
+  await db.insert(emailCampaignRecipients).values({ ...data, error: data.error ?? null });
+}
+
+export async function finishEmailCampaign(id: number, sentCount: number, failedCount: number) {
+  if (!db) return;
+  await db
+    .update(emailCampaigns)
+    .set({ sentCount, failedCount, status: "sent", finishedAt: new Date() })
+    .where(eq(emailCampaigns.id, id));
+}
+
+export async function listEmailCampaigns(limit = 20) {
+  if (!db) return [];
+  return db
+    .select({
+      id: emailCampaigns.id,
+      subject: emailCampaigns.subject,
+      audience: emailCampaigns.audience,
+      recipientCount: emailCampaigns.recipientCount,
+      sentCount: emailCampaigns.sentCount,
+      failedCount: emailCampaigns.failedCount,
+      status: emailCampaigns.status,
+      createdAt: emailCampaigns.createdAt,
+      createdByName: sql<string | null>`(SELECT COALESCE(NULLIF(TRIM(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))), ''), u.name) FROM users u WHERE u.id = ${emailCampaigns.createdBy})`,
+    })
+    .from(emailCampaigns)
+    .orderBy(desc(emailCampaigns.createdAt))
+    .limit(limit);
+}
+
+export async function getEmailCampaignRecipients(campaignId: number) {
+  if (!db) return [];
+  return db
+    .select({
+      userId: emailCampaignRecipients.userId,
+      email: emailCampaignRecipients.email,
+      status: emailCampaignRecipients.status,
+      error: emailCampaignRecipients.error,
+      sentAt: emailCampaignRecipients.sentAt,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      name: users.name,
+    })
+    .from(emailCampaignRecipients)
+    .leftJoin(users, eq(users.id, emailCampaignRecipients.userId))
+    .where(eq(emailCampaignRecipients.campaignId, campaignId))
+    .orderBy(users.firstName, users.lastName);
+}
+
+/** Record that a member does not want campaign emails. Idempotent. */
+export async function optOutOfCampaignEmail(userId: number) {
+  if (!db) throw new Error("DB unavailable");
+  const [existing] = await db.select({ id: emailOptOuts.id }).from(emailOptOuts).where(eq(emailOptOuts.userId, userId)).limit(1);
+  if (!existing) await db.insert(emailOptOuts).values({ userId });
 }

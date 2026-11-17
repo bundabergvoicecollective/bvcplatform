@@ -21,6 +21,13 @@ export type SendEmailOptions = {
   subject: string;
   html: string;
   text?: string;
+  /**
+   * Unsubscribe address for bulk mail. Sets List-Unsubscribe, which Gmail and
+   * Apple Mail turn into an "Unsubscribe" link at the top of the message, and
+   * List-Unsubscribe-Post for one-click. Mail providers increasingly file
+   * bulk mail without it as spam.
+   */
+  listUnsubscribe?: string;
 };
 
 /**
@@ -134,4 +141,53 @@ export function buildInviteEmail(inviteUrl: string, expiresAt: Date): { subject:
 </html>`;
   const text = `You've been invited to join Bundaberg Voice Collective.\n\nAccept your invitation: ${inviteUrl}\n\nThis invitation expires on ${expiry}.`;
   return { subject, html, text };
+}
+
+
+/**
+ * One SMTP connection for a batch of messages — a campaign to dozens of
+ * members. sendEmail() opens and authenticates a fresh connection every
+ * time, which is right for a single receipt and slow for fifty in a row.
+ *
+ * Unlike sendEmail(), every result carries the provider's reason, because the
+ * campaign records which members a message did and did not reach.
+ */
+export function createBatchSender() {
+  const transport = nodemailer.createTransport({
+    host: ENV.smtpHost,
+    port: ENV.smtpPort,
+    secure: ENV.smtpPort === 465,
+    pool: true,
+    maxConnections: 1,
+    auth: ENV.smtpUser && ENV.smtpPass ? { user: ENV.smtpUser, pass: ENV.smtpPass } : undefined,
+  });
+  return {
+    async send(opts: SendEmailOptions): Promise<{ ok: boolean; error?: string }> {
+      if (!ENV.smtpPass) return { ok: false, error: "SMTP_PASS is not set" };
+      try {
+        const info = await transport.sendMail({
+          from: ENV.smtpFrom,
+          to: opts.to,
+          subject: opts.subject,
+          html: opts.html,
+          text: opts.text,
+          ...(opts.listUnsubscribe
+            ? {
+                list: { unsubscribe: { url: opts.listUnsubscribe, comment: "Unsubscribe" } },
+                headers: { "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+              }
+            : {}),
+        });
+        console.log(`[Email] campaign message accepted for ${opts.to} — id ${info.messageId ?? "(none)"}`);
+        if (info.rejected?.length) return { ok: false, error: `rejected: ${JSON.stringify(info.rejected)}` };
+        return { ok: true };
+      } catch (err) {
+        console.error("[Email] campaign message failed for", opts.to, err);
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    close() {
+      transport.close();
+    },
+  };
 }

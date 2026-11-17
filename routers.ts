@@ -1,4 +1,6 @@
 import { TRPCError } from "@trpc/server";
+import { buildCampaignEmail } from "./campaignEmail";
+import { createBatchSender } from "./email";
 import { z } from "zod";
 import { ENV } from "./_core/env";
 import { createSquarePaymentLink, getSquareOrderStatus } from "./_core/square";
@@ -90,6 +92,12 @@ import {
   getAllSessionStats,
   createManualMember,
   recordCashPayment,
+  getMultipassEmptyAudience,
+  listEmailCampaigns,
+  getEmailCampaignRecipients,
+  createEmailCampaign,
+  recordCampaignRecipient,
+  finishEmailCampaign,
   findRecentSquareOrder,
   recordDoorPayment,
   updateUserProfile,
@@ -2490,7 +2498,127 @@ async function checkoutLink(
   }
 }
 
+// ─── Email campaigns ─────────────────────────────────────────────────────────
+//
+// An admin writes one message and sends it to the members whose 5- or 10-pass
+// has run out. The audience is worked out on the server at the moment of
+// sending, every time: the page sends back only the ids it was showing, and
+// anyone not still in the audience — topped up in the meantime, unsubscribed,
+// removed — is skipped rather than emailed on the strength of a stale screen.
+
+const CAMPAIGN_AUDIENCE = "multipass_empty";
+
+/** Resend accepts about two messages a second; this stays under it. */
+const CAMPAIGN_SEND_GAP_MS = 600;
+
+const campaignContent = z.object({
+  subject: z.string().trim().min(1, "Add a subject").max(200),
+  body: z.string().trim().min(1, "Write a message").max(10_000),
+  includeBuyButton: z.boolean(),
+});
+
+const firstNameOf = (u: { firstName?: string | null; name?: string | null }) =>
+  u.firstName?.trim() || u.name?.trim().split(/\s+/)[0] || "there";
+
+const campaignsRouter = router({
+  audience: adminProcedure.query(() => getMultipassEmptyAudience()),
+
+  list: adminProcedure.query(() => listEmailCampaigns()),
+
+  recipients: adminProcedure
+    .input(z.object({ campaignId: z.number() }))
+    .query(({ input }) => getEmailCampaignRecipients(input.campaignId)),
+
+  /** The real email, to the admin's own address, before anyone else gets it. */
+  sendTest: adminProcedure.input(campaignContent).mutation(async ({ input, ctx }) => {
+    const to = ctx.user.email?.trim();
+    if (!to) throw new TRPCError({ code: "BAD_REQUEST", message: "Your account has no email address to send a test to." });
+    let built;
+    try {
+      built = buildCampaignEmail({ ...input, firstName: firstNameOf(ctx.user), userId: ctx.user.id });
+    } catch (e) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: e instanceof Error ? e.message : String(e) });
+    }
+    const sender = createBatchSender();
+    try {
+      const result = await sender.send({ to, ...built, subject: `[TEST] ${built.subject}` });
+      if (!result.ok) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `The mail provider refused it: ${result.error}` });
+      }
+      return { to };
+    } finally {
+      sender.close();
+    }
+  }),
+
+  send: adminProcedure
+    .input(campaignContent.extend({ userIds: z.array(z.number()).min(1).max(500) }))
+    .mutation(async ({ input, ctx }) => {
+      // Build one message before creating anything. If APP_URL or JWT_SECRET
+      // is missing this throws, and nobody is emailed a link to nowhere.
+      try {
+        buildCampaignEmail({ ...input, firstName: "test", userId: ctx.user.id });
+      } catch (e) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: e instanceof Error ? e.message : String(e) });
+      }
+
+      // A second tap, or a second admin, sending the same message minutes
+      // later would email everyone twice. Stop it here, not just in the UI.
+      const recent = (await listEmailCampaigns(5)).find(
+        (c) => c.subject === input.subject && Date.now() - new Date(c.createdAt).getTime() < 15 * 60_000,
+      );
+      if (recent) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `A campaign with this subject was sent ${Math.max(1, Math.round((Date.now() - new Date(recent.createdAt).getTime()) / 60_000))} minute(s) ago. Check the history below before sending it again.`,
+        });
+      }
+
+      const wanted = new Set(input.userIds);
+      const audience = await getMultipassEmptyAudience();
+      const recipients = audience.filter((m) => wanted.has(m.id) && !m.optedOut && m.email);
+      const skipped = input.userIds.length - recipients.length;
+      if (!recipients.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "None of the selected members still has an empty pass and an email address, so nothing was sent.",
+        });
+      }
+
+      const campaignId = await createEmailCampaign({
+        subject: input.subject,
+        body: input.body,
+        audience: CAMPAIGN_AUDIENCE,
+        createdBy: ctx.user.id,
+        recipientCount: recipients.length,
+      });
+
+      const sender = createBatchSender();
+      let sent = 0;
+      let failed = 0;
+      try {
+        for (const [i, m] of recipients.entries()) {
+          if (i > 0) await new Promise((r) => setTimeout(r, CAMPAIGN_SEND_GAP_MS));
+          const email = m.email!.trim();
+          const built = buildCampaignEmail({ ...input, firstName: firstNameOf(m), userId: m.id });
+          const result = await sender.send({ to: email, ...built });
+          if (result.ok) sent++;
+          else failed++;
+          await recordCampaignRecipient({
+            campaignId, userId: m.id, email, status: result.ok ? "sent" : "failed", error: result.error,
+          }).catch((e) => console.error("[Campaign] could not record recipient", m.id, e));
+        }
+      } finally {
+        sender.close();
+        await finishEmailCampaign(campaignId, sent, failed);
+      }
+      console.log(`[Campaign] #${campaignId} "${input.subject}": ${sent} sent, ${failed} failed, ${skipped} skipped`);
+      return { campaignId, sent, failed, skipped };
+    }),
+});
+
 export const appRouter = router({
+  campaigns: campaignsRouter,
   ...coreRouter._def.procedures,
   events: eventsRouter,
   groups: groupsRouter,
