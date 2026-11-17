@@ -29,6 +29,7 @@ import {
   UserCheck,
   Gift,
   AlertCircle,
+  Radio,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useState, useRef } from "react";
@@ -393,7 +394,7 @@ function SessionRow({
                       member={member}
                       sessionId={session.id}
                       attended={attended}
-                      sessionType={sessionType as "pass" | "single" | "complimentary" | null}
+                      sessionType={sessionType as "pass" | "single" | "complimentary" | "online" | null}
                       paidCents={rec?.paidCents ?? 0}
                       onMark={(attended, complimentary) =>
                         mark.mutate({ sessionId: session.id, userId: member.id, attended, complimentary })
@@ -547,7 +548,7 @@ function MemberAttendanceRow({
   member: { id: number; name: string | null; firstName?: string | null; lastName?: string | null; email: string | null };
   sessionId: number;
   attended: boolean;
-  sessionType: "pass" | "single" | "complimentary" | null;
+  sessionType: "pass" | "single" | "complimentary" | "online" | null;
   /** Taken at the door for this rehearsal already. */
   paidCents: number;
   onMark: (attended: boolean, complimentary: boolean) => void;
@@ -654,6 +655,19 @@ function MemberAttendanceRow({
               >
                 <Gift className="w-3 h-3 mr-1" />
                 Complimentary
+              </Badge>
+            )}
+            {/* Somebody who sang along from home. Marked present, no pass
+                deducted — they already paid for the stream — and said out
+                loud, because "attended" with no badge looked like a row
+                whose type had failed to render. */}
+            {attended && sessionType === "online" && (
+              <Badge
+                className="text-xs px-1.5 py-0 h-5 shrink-0"
+                style={{ background: "oklch(0.92 0.05 280)", color: "oklch(0.38 0.12 280)" }}
+              >
+                <Radio className="w-3 h-3 mr-1" />
+                Online
               </Badge>
             )}
           </div>

@@ -430,6 +430,28 @@ function StreamCard({
     { enabled: isPast && hasRecording && !isAdmin }
   );
 
+  /**
+   * Records that this member joined the live rehearsal.
+   *
+   * Never blocks the member getting in: the anchor opens the stream whatever
+   * happens here, and a failure is logged rather than thrown in their face.
+   * Missing one attendance mark is a bookkeeping problem; stopping somebody
+   * joining the rehearsal is a real one.
+   *
+   * The server refuses to record outside the live window and deducts no pass
+   * — access was already unlocked, and an online join must not cost a second
+   * session.
+   */
+  const joinLive = trpc.liveStreams.joinLiveRehearsal.useMutation({
+    onSuccess: (data) => {
+      if (data?.attendance?.recorded) {
+        toast.success("You're marked as attending tonight's rehearsal.");
+        utils.attendance.allSessionStats.invalidate();
+      }
+    },
+    onError: (e) => console.warn("[LiveStream] attendance not recorded:", e.message),
+  });
+
   const unlockWithPass = trpc.liveStreams.unlockWithPass.useMutation({
     onSuccess: () => {
       utils.liveStreams.list.invalidate();
@@ -654,6 +676,22 @@ function StreamCard({
                   href={stream.streamUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  // Tell the server they are joining, THEN let the browser
+                  // open the stream.
+                  //
+                  // The procedure that records online attendance has existed
+                  // all along and nothing ever called it: this was a bare
+                  // link straight to Zoom, so every member who sang along
+                  // from home was absent from the roll and from the night's
+                  // figures.
+                  //
+                  // Deliberately not awaited, and deliberately still an
+                  // anchor. Awaiting a mutation and then calling window.open
+                  // puts the open outside the click, where a pop-up blocker
+                  // stops it — a member who cannot get into the rehearsal is
+                  // a far worse outcome than one whose attendance is missed.
+                  // The request is already in flight when the tab opens.
+                  onClick={() => joinLive.mutate({ streamId: stream.id })}
                   className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-all hover:opacity-90"
                   style={{ background: "oklch(0.55 0.14 185)", color: "white" }}
                 >

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   BellOff, CheckCheck, CreditCard, Megaphone, Info, Music2, FileText,
-  CalendarDays, Trash2, Mail, MailOpen,
+  CalendarDays, Trash2, Mail, MailOpen, MessageSquare,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -49,6 +49,33 @@ const TYPE_CONFIG = {
   document: { icon: FileText, bg: "oklch(0.94 0.03 60)", text: "oklch(0.40 0.10 60)", label: "New Document" },
   event: { icon: CalendarDays, bg: "oklch(0.94 0.04 145)", text: "oklch(0.35 0.10 145)", label: "New Event" },
 };
+
+/**
+ * Chat notices are stored with type "general", because the type column is a
+ * MySQL enum and widening it is a MODIFY COLUMN the schema reconciler cannot
+ * do — it only adds tables, columns and unique indexes. Adding a column for
+ * this was the other option and a worse one: if the schema step ever reported
+ * success and applied nothing, as it has here before, every read of this list
+ * would fail on the missing column and the whole bell would go dark.
+ *
+ * So a chat notice is recognised by the prefix db.ts writes on its title.
+ * Both ends are our own code; a member's name or a group's name sits AFTER
+ * the prefix and cannot imitate it. Keep this string in step with
+ * CHAT_TITLE_PREFIX in db.ts.
+ */
+const CHAT_TITLE_PREFIX = "Message from ";
+
+const CHAT_CONFIG = {
+  icon: MessageSquare,
+  bg: "oklch(0.94 0.05 210)",
+  text: "oklch(0.35 0.10 210)",
+  label: "Message",
+};
+
+function configFor(n: { type: string; title: string }) {
+  if (n.type === "general" && n.title.startsWith(CHAT_TITLE_PREFIX)) return CHAT_CONFIG;
+  return TYPE_CONFIG[n.type as keyof typeof TYPE_CONFIG] ?? TYPE_CONFIG.general;
+}
 
 const TEAL = "oklch(0.55 0.14 185)";
 const NAVY = "oklch(0.22 0.07 240)";
@@ -188,7 +215,7 @@ export default function NotificationList({ actions }: { actions: Actions }) {
   return (
     <div className="space-y-3">
       {notifications.map((n) => {
-        const config = TYPE_CONFIG[n.type as keyof typeof TYPE_CONFIG] ?? TYPE_CONFIG.general;
+        const config = configFor(n);
         const Icon = config.icon;
         const busy = markRead.isPending || markUnread.isPending || remove.isPending;
 

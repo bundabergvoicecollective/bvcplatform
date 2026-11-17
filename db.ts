@@ -648,15 +648,28 @@ export async function registerLiveStreamAttendance(streamId: number, userId: num
   const stream = streamRows[0];
   if (!stream) throw new Error("Live stream not found");
 
-  const streamDate = stream.scheduledAt.toISOString().slice(0, 10);
+  // Both sides converted to Brisbane before the dates are compared. The
+  // column holds UTC, and for a 6:30pm rehearsal the UTC date happens to
+  // match — which is why this went unnoticed — but a morning or early
+  // afternoon stream is the previous day in UTC and would find no session at
+  // all. The +10 is the idiom used everywhere else in this file.
   const sessionRows = await db
     .select({ id: sessions.id, title: sessions.title })
     .from(sessions)
-    .where(sql`DATE(${sessions.sessionDate}) = ${streamDate}`)
+    .where(sql`DATE(DATE_ADD(${sessions.sessionDate}, INTERVAL 10 HOUR))
+               = DATE(DATE_ADD(${stream.scheduledAt}, INTERVAL 10 HOUR))`)
     .orderBy(desc(sessions.sessionDate))
     .limit(1);
   const session = sessionRows[0];
-  if (!session) return { recorded: false, reason: "no_matching_session" as const };
+  if (!session) {
+    // Said out loud rather than returned into silence. Somebody joined a
+    // live rehearsal and their attendance went nowhere, and the only way to
+    // find that out used to be noticing the number was wrong weeks later.
+    console.warn(
+      `[LiveStream] member ${userId} joined stream ${streamId} but no rehearsal exists on that date — attendance not recorded`,
+    );
+    return { recorded: false, reason: "no_matching_session" as const };
+  }
 
   const existingRows = await db
     .select()
@@ -1438,14 +1451,127 @@ export async function getMonthlyOnlinePassSalesSummary() {
 
 // ─── Direct Messages ─────────────────────────────────────────────────────────
 
+/**
+ * Tell somebody they have a message.
+ *
+ * Every chat path — direct, group and conversation — inserted its row and
+ * stopped. No notification, no push, nothing in the bell. The only sign a
+ * message had arrived was a number beside Chat in the sidebar, which on a
+ * phone is behind the menu button: in practice the recipient found out next
+ * time they happened to open the app and look. A chat that does not ring is
+ * a chat people stop trusting.
+ *
+ * ONE NOTIFICATION PER CONVERSATION PER QUIET WINDOW. A lively exchange is
+ * thirty messages in ten minutes, and thirty buzzes is how somebody turns
+ * notifications off for good — taking rehearsal changes and new music with
+ * them. The window is judged from the MESSAGES themselves (was there an
+ * earlier one from the same sender in the same place?) rather than from a
+ * new column, because the messages already know.
+ *
+ * The notification type is "general" deliberately. Adding a "message" value
+ * to the enum is a MODIFY COLUMN, which the schema reconciler cannot do and
+ * which needs somebody sitting at a terminal answering prompts — not worth
+ * it for an icon. The title carries the meaning instead.
+ *
+ * Never throws. A message must send whether or not anybody can be told
+ * about it.
+ */
+export async function notifyChatMessage(data: {
+  fromUserId: number;
+  recipientIds: number[];
+  body: string;
+  /** "Andy McLucas" or "Sopranos" — what the member sees as the source. */
+  source: string;
+  /** True when `source` is a group rather than a person. */
+  isGroup: boolean;
+  /** Was this sender already noisy in this conversation lately? */
+  alreadyNotifiedRecently: boolean;
+}) {
+  if (!db) return;
+  try {
+    // Never notify the sender, even when they are a participant.
+    const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.fromUserId);
+    if (!recipients.length || data.alreadyNotifiedRecently) return;
+
+    const [sender] = await db
+      .select({ firstName: users.firstName, lastName: users.lastName, name: users.name })
+      .from(users)
+      .where(eq(users.id, data.fromUserId))
+      .limit(1);
+    const who =
+      [sender?.firstName, sender?.lastName].filter(Boolean).join(" ") || sender?.name || "A member";
+
+    // Both forms start with the literal "Message from " on purpose: the bell
+    // keys off that prefix to show a chat icon instead of the generic info
+    // one, since the type has to be "general" (see above). The prefix is
+    // written here and read in NotificationList — both sides are ours, so no
+    // group name or display name can fake it, because it comes first.
+    const title = data.isGroup
+      ? `${CHAT_TITLE_PREFIX}${who} in ${data.source}`
+      : `${CHAT_TITLE_PREFIX}${who}`;
+    // The preview, on one line. A pasted paragraph with newlines in it turns
+    // a notification into a wall.
+    const flat = data.body.replace(/\s+/g, " ").trim();
+    const preview = flat.length > 140 ? `${flat.slice(0, 139)}…` : flat;
+
+    await db.insert(notifications).values(
+      recipients.map((userId) => ({ userId, type: "general" as const, title, message: preview, read: false })),
+    );
+
+    // Imported here rather than at the top because webPush imports this
+    // module. Not awaited: a slow push must never hold up a chat message.
+    void import("./webPush")
+      .then(({ sendPushToUsers }) =>
+        sendPushToUsers(recipients, { title, body: preview, url: "/messages" }),
+      )
+      .catch((err) => console.error("[notifyChatMessage] push failed:", err));
+  } catch (err) {
+    console.error("[notifyChatMessage] failed:", err);
+  }
+}
+
+/** Minutes of quiet before the same conversation may buzz somebody again. */
+const CHAT_QUIET_MINUTES = 5;
+
+/**
+ * Every chat notification's title begins with this. The bell uses it to tell
+ * a message apart from the other "general" notices. Change it here and in
+ * client/components/NotificationList.tsx together, or chat notices quietly
+ * go back to looking like generic ones.
+ */
+export const CHAT_TITLE_PREFIX = "Message from ";
+
 export async function sendDirectMessage(fromUserId: number, toUserId: number, body: string) {
   if (!db) throw new Error("DB unavailable");
+
+  // Asked BEFORE the insert, or this message would find itself and conclude
+  // it had already announced its own arrival.
+  const [recent] = await db
+    .select({ id: directMessages.id })
+    .from(directMessages)
+    .where(and(
+      eq(directMessages.fromUserId, fromUserId),
+      eq(directMessages.toUserId, toUserId),
+      sql`${directMessages.createdAt} > DATE_SUB(now(), INTERVAL ${sql.raw(String(CHAT_QUIET_MINUTES))} MINUTE)`,
+    ))
+    .limit(1);
+
   await db.insert(directMessages).values({ fromUserId, toUserId, body });
   const result = await db
     .select()
     .from(directMessages)
     .orderBy(desc(directMessages.id))
     .limit(1);
+
+  void notifyChatMessage({
+    fromUserId,
+    recipientIds: [toUserId],
+    body,
+    source: "",
+    isGroup: false,
+    alreadyNotifiedRecently: Boolean(recent),
+  });
+
   return result[0];
 }
 
@@ -1809,12 +1935,43 @@ export async function removeGroupMember(groupId: number, userId: number) {
 
 export async function sendGroupMessage(groupId: number, fromUserId: number, body: string) {
   if (!db) throw new Error("DB unavailable");
+
+  // Asked before the insert, so this message does not find itself.
+  const [recent] = await db
+    .select({ id: groupMessages.id })
+    .from(groupMessages)
+    .where(and(
+      eq(groupMessages.groupId, groupId),
+      eq(groupMessages.fromUserId, fromUserId),
+      sql`${groupMessages.createdAt} > DATE_SUB(now(), INTERVAL ${sql.raw(String(CHAT_QUIET_MINUTES))} MINUTE)`,
+    ))
+    .limit(1);
+
   await db.insert(groupMessages).values({ groupId, fromUserId, body });
   const result = await db
     .select()
     .from(groupMessages)
     .orderBy(desc(groupMessages.id))
     .limit(1);
+
+  // Approved members only. Somebody with a pending request, or one who was
+  // turned down, can neither open the group nor read the message, so buzzing
+  // them is both useless and a small leak of what is being said in there.
+  const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, groupId)).limit(1);
+  const members = await db
+    .select({ userId: groupMembers.userId })
+    .from(groupMembers)
+    .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.status, "approved")));
+
+  void notifyChatMessage({
+    fromUserId,
+    recipientIds: members.map((m) => m.userId),
+    body,
+    source: group?.name ?? "a group",
+    isGroup: true,
+    alreadyNotifiedRecently: Boolean(recent),
+  });
+
   return result[0];
 }
 
@@ -2551,6 +2708,18 @@ export async function sendGroupConversationMessage(
   body: string
 ) {
   if (!db) throw new Error("DB unavailable");
+
+  // Asked before the insert, so this message does not find itself.
+  const [recent] = await db
+    .select({ id: conversationMessages.id })
+    .from(conversationMessages)
+    .where(and(
+      eq(conversationMessages.conversationId, conversationId),
+      eq(conversationMessages.fromUserId, fromUserId),
+      sql`${conversationMessages.createdAt} > DATE_SUB(now(), INTERVAL ${sql.raw(String(CHAT_QUIET_MINUTES))} MINUTE)`,
+    ))
+    .limit(1);
+
   await db.insert(conversationMessages).values({ conversationId, fromUserId, body });
   // Update conversation updatedAt
   await db
@@ -2562,6 +2731,28 @@ export async function sendGroupConversationMessage(
     .from(conversationMessages)
     .orderBy(desc(conversationMessages.id))
     .limit(1);
+
+  const [conv] = await db
+    .select({ name: conversations.name })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  const participants = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, conversationId));
+
+  // A conversation name is optional, and most are unnamed. "Andy McLucas in
+  // a group chat" is clumsy but true; a title saying "in null" is neither.
+  void notifyChatMessage({
+    fromUserId,
+    recipientIds: participants.map((p) => p.userId),
+    body,
+    source: conv?.name?.trim() || "a group chat",
+    isGroup: true,
+    alreadyNotifiedRecently: Boolean(recent),
+  });
+
   return msg;
 }
 
