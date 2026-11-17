@@ -512,6 +512,21 @@ function MemberFormDialog({
 
 type CashPassType = "10-pass" | "5-pass" | "single" | "10-pass-comp" | "5-pass-comp" | "single-comp" | "custom-carryover";
 
+/**
+ * How a payment arrived, as the admin is asked it. Worded for how people here
+ * talk: "EFT" at a rehearsal means tapping a card on the reader, so a bare
+ * "EFT" option meaning bank transfer would send exactly the payments that must
+ * be filed as Square onto the cash total instead. The values are the server's
+ * and do not change; only what is on the screen does.
+ */
+type PayChannel = "cash" | "card" | "eft" | "other";
+const PAY_CHANNEL_LABEL: Record<PayChannel, string> = {
+  cash: "Cash",
+  card: "Card / EFTPOS on the Square reader",
+  eft: "Bank transfer",
+  other: "Other",
+};
+
 function CashPaymentDialog({
   open,
   onClose,
@@ -525,6 +540,13 @@ function CashPaymentDialog({
   const [passType, setPassType] = useState<CashPassType>("10-pass");
   const [notes, setNotes] = useState("");
   const [customCount, setCustomCount] = useState("1");
+  // How the money arrived. This decides where it is counted: a tap on the
+  // Square reader is already in Square's own figures, so it must be filed as
+  // Square or the night's takings show it twice. Every paid option in this
+  // dialog used to be labelled "(Cash)" and filed as cash, card or not.
+  const [channel, setChannel] = useState<PayChannel>("cash");
+  // Set when the server says a matching card payment is already on record.
+  const [duplicate, setDuplicate] = useState<string | null>(null);
 
   const LABELS: Record<CashPassType, string> = {
     "10-pass": "10-Pass ($140)",
@@ -546,11 +568,26 @@ function CashPaymentDialog({
       utils.dashboard.adminStats.invalidate();
       utils.attendance.lastSessionStats.invalidate();
       const label = isCarryOver ? `${customCount} carry-over sessions` : LABELS[passType];
-      toast.success(`${isComp ? "Complimentary pass" : "Cash payment"} recorded — ${label} assigned to ${member.firstName ?? member.name}`);
+      toast.success(`${isComp ? "Complimentary pass" : `${PAY_CHANNEL_LABEL[channel]} payment`} recorded — ${label} assigned to ${member.firstName ?? member.name}`);
       onClose();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      // Shown in the dialog rather than as a toast: it needs a decision, and
+      // a toast disappears before an older eye has finished reading it.
+      if (e.data?.code === "CONFLICT") setDuplicate(e.message);
+      else toast.error(e.message);
+    },
   });
+
+  const submit = (allowDuplicate: boolean) =>
+    recordPayment.mutate({
+      userId: member.id,
+      passType,
+      customSessionCount: isCarryOver ? (parseInt(customCount) >= 0 ? parseInt(customCount) : 0) : undefined,
+      paymentChannel: isComp ? undefined : channel,
+      notes: notes || undefined,
+      allowDuplicate: allowDuplicate || undefined,
+    });
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -573,14 +610,14 @@ function CashPaymentDialog({
           )}
           <div className="space-y-1.5">
             <Label>Pass Type</Label>
-            <Select value={passType} onValueChange={(v) => setPassType(v as CashPassType)}>
+            <Select value={passType} onValueChange={(v) => { setPassType(v as CashPassType); setDuplicate(null); }}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="10-pass">10-Pass — $140 AUD (Cash)</SelectItem>
-                <SelectItem value="5-pass">5-Pass — $75 AUD (Cash)</SelectItem>
-                <SelectItem value="single">Single Session — $16 AUD (Cash)</SelectItem>
+                <SelectItem value="10-pass">10-Pass — $140 AUD</SelectItem>
+                <SelectItem value="5-pass">5-Pass — $75 AUD</SelectItem>
+                <SelectItem value="single">Single Session — $16 AUD</SelectItem>
                 <SelectItem value="10-pass-comp">10-Pass — Complimentary ($0)</SelectItem>
                 <SelectItem value="5-pass-comp">5-Pass — Complimentary ($0)</SelectItem>
                 <SelectItem value="single-comp">Single Session — Complimentary ($0)</SelectItem>
@@ -588,6 +625,39 @@ function CashPaymentDialog({
               </SelectContent>
             </Select>
           </div>
+          {!isComp && (
+            <div className="space-y-1.5">
+              <Label>How did they pay?</Label>
+              <Select value={channel} onValueChange={(v) => { setChannel(v as PayChannel); setDuplicate(null); }}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">{PAY_CHANNEL_LABEL.cash}</SelectItem>
+                  <SelectItem value="card">{PAY_CHANNEL_LABEL.card}</SelectItem>
+                  <SelectItem value="eft">{PAY_CHANNEL_LABEL.eft}</SelectItem>
+                  <SelectItem value="other">{PAY_CHANNEL_LABEL.other}</SelectItem>
+                </SelectContent>
+              </Select>
+              {channel === "card" && (
+                <p className="text-xs px-3 py-2 rounded-lg" style={{ background: "oklch(0.94 0.04 185)", color: "oklch(0.35 0.1 185)" }}>
+                  Square already counts this money in its own takings, so it is kept out of the
+                  cash total. If Square matched it to this member automatically, you'll be told
+                  before anything is added twice.
+                </p>
+              )}
+            </div>
+          )}
+          {duplicate && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-sm" style={{ background: "oklch(0.96 0.04 27)", color: "oklch(0.42 0.15 27)", border: "1px solid oklch(0.85 0.09 27)" }}>
+              <span className="text-base leading-none mt-0.5">⚠️</span>
+              <div>
+                <p className="font-semibold">This payment may already be recorded.</p>
+                <p className="mt-1">{duplicate}</p>
+                <p className="mt-1">Check their balance first. Only use <strong>Record it anyway</strong> if they really paid twice.</p>
+              </div>
+            </div>
+          )}
           {isCarryOver && (
             <div className="space-y-1.5">
               <Label>Sessions Remaining on Paper Card *</Label>
@@ -621,16 +691,16 @@ function CashPaymentDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={recordPayment.isPending}>Cancel</Button>
           <Button
-            onClick={() => recordPayment.mutate({
-              userId: member.id,
-              passType,
-              customSessionCount: isCarryOver ? (parseInt(customCount) >= 0 ? parseInt(customCount) : 0) : undefined,
-              notes: notes || undefined,
-            })}
+            onClick={() => submit(Boolean(duplicate))}
             disabled={recordPayment.isPending}
-            style={{ background: isComp ? "oklch(0.55 0.14 185)" : "oklch(0.78 0.17 75)", color: "white" }}
+            style={{
+              background: duplicate ? "oklch(0.55 0.18 25)" : isComp ? "oklch(0.55 0.14 185)" : "oklch(0.78 0.17 75)",
+              color: "white",
+            }}
           >
-            {recordPayment.isPending ? "Recording…" : isComp ? "Assign Complimentary" : "Record Payment"}
+            {recordPayment.isPending
+              ? "Recording…"
+              : duplicate ? "Record it anyway" : isComp ? "Assign Complimentary" : "Record Payment"}
           </Button>
         </DialogFooter>
       </DialogContent>

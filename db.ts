@@ -1373,6 +1373,58 @@ export async function getPassOrderByStripeSession(stripeSessionId: string) {
   return result.length > 0 ? result[0] : null;
 }
 
+/**
+ * How far apart a hand-entered card payment and Square's own report of it can
+ * plausibly be. Money is often typed in the morning after rehearsal, so a day
+ * is not quite enough; a member genuinely buying the same pass twice inside
+ * a day and a half is rare, and the admin can still say so.
+ */
+const CARD_DUPLICATE_WINDOW_HOURS = 36;
+
+/**
+ * A paid Square order for this member and amount, recorded recently.
+ *
+ * A card tapped on the Square reader can reach this database twice: once when
+ * Square's webhook matches it to a member by email, and once when an admin
+ * records it by hand because they did not see that happen. Either order is
+ * possible, and either way the member would get the sessions twice.
+ *
+ * `handEnteredOnly` narrows it to orders with no Square payment id — the ones
+ * an admin typed in — which is what the webhook needs to look for.
+ */
+export async function findRecentSquareOrder(
+  userId: number,
+  amountCents: number,
+  opts: { handEnteredOnly?: boolean } = {},
+) {
+  if (!db) return null;
+  const conditions = [
+    eq(passOrders.userId, userId),
+    eq(passOrders.amountCents, amountCents),
+    eq(passOrders.paymentMethod, "square"),
+    eq(passOrders.status, "paid"),
+    sql`${passOrders.createdAt} > DATE_SUB(now(), INTERVAL ${sql.raw(String(CARD_DUPLICATE_WINDOW_HOURS))} HOUR)`,
+  ];
+  if (opts.handEnteredOnly) conditions.push(isNull(passOrders.stripeSessionId));
+  const [row] = await db
+    .select()
+    .from(passOrders)
+    .where(and(...conditions))
+    .orderBy(desc(passOrders.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Attach Square's payment id to an order an admin entered by hand, so the
+ * webhook — and every retry of it — recognises the payment as already
+ * recorded instead of granting it a second time.
+ */
+export async function claimSquareOrder(orderId: number, paymentId: string) {
+  if (!db) return;
+  await db.update(passOrders).set({ stripeSessionId: paymentId }).where(eq(passOrders.id, orderId));
+}
+
 export async function updatePassOrderStatus(
   stripeSessionId: string,
   status: "pending" | "paid" | "failed" | "cancelled",

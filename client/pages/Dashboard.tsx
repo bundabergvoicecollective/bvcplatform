@@ -112,8 +112,8 @@ function squareNoteLabel(note: string | null): string {
 /** What each way of paying is called on screen. */
 const CHANNEL_LABEL: Record<string, string> = {
   cash: "Cash",
-  eft: "EFT / bank transfer",
-  card: "Card (Square reader)",
+  eft: "Bank transfer",
+  card: "Card / EFTPOS (Square reader)",
   other: "Other",
   complimentary: "Complimentary",
 };
@@ -294,8 +294,8 @@ function IncomeWidget() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="eft">EFT / bank transfer</SelectItem>
-                  <SelectItem value="card">Card (Square reader)</SelectItem>
+                  <SelectItem value="eft">Bank transfer</SelectItem>
+                  <SelectItem value="card">Card / EFTPOS on the Square reader</SelectItem>
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
