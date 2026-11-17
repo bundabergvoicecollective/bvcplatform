@@ -648,15 +648,28 @@ export async function registerLiveStreamAttendance(streamId: number, userId: num
   const stream = streamRows[0];
   if (!stream) throw new Error("Live stream not found");
 
-  const streamDate = stream.scheduledAt.toISOString().slice(0, 10);
+  // Both sides converted to Brisbane before the dates are compared. The
+  // column holds UTC, and for a 6:30pm rehearsal the UTC date happens to
+  // match — which is why this went unnoticed — but a morning or early
+  // afternoon stream is the previous day in UTC and would find no session at
+  // all. The +10 is the idiom used everywhere else in this file.
   const sessionRows = await db
     .select({ id: sessions.id, title: sessions.title })
     .from(sessions)
-    .where(sql`DATE(${sessions.sessionDate}) = ${streamDate}`)
+    .where(sql`DATE(DATE_ADD(${sessions.sessionDate}, INTERVAL 10 HOUR))
+               = DATE(DATE_ADD(${stream.scheduledAt}, INTERVAL 10 HOUR))`)
     .orderBy(desc(sessions.sessionDate))
     .limit(1);
   const session = sessionRows[0];
-  if (!session) return { recorded: false, reason: "no_matching_session" as const };
+  if (!session) {
+    // Said out loud rather than returned into silence. Somebody joined a
+    // live rehearsal and their attendance went nowhere, and the only way to
+    // find that out used to be noticing the number was wrong weeks later.
+    console.warn(
+      `[LiveStream] member ${userId} joined stream ${streamId} but no rehearsal exists on that date — attendance not recorded`,
+    );
+    return { recorded: false, reason: "no_matching_session" as const };
+  }
 
   const existingRows = await db
     .select()
