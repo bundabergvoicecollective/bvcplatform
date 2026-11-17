@@ -756,10 +756,10 @@ function CashPaymentDialog({
                 </SelectContent>
               </Select>
               {channel === "card" && (
-                <p className="text-xs px-3 py-2 rounded-lg" style={{ background: "oklch(0.94 0.04 185)", color: "oklch(0.35 0.1 185)" }}>
-                  Square already counts this money in its own takings, so it is kept out of the
-                  cash total. If Square matched it to this member automatically, you'll be told
-                  before anything is added twice.
+                // Plain grey text, not a coloured box: it is reassurance, and a
+                // tinted panel under a form field reads as a warning.
+                <p className="text-xs" style={{ color: "oklch(0.52 0.03 240)" }}>
+                  Counted once — Square already has this payment.
                 </p>
               )}
             </div>
