@@ -49,8 +49,9 @@ on:
           - invitestatus
           - resendinvites
           - grantadmin
+          - testchat
       apply:
-        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending, annotatepass, resendinvites and grantadmin only)"
+        description: "Write the changes (mediaurls, recordpayment, newrehearsal, doorpayments, markattendance, clearpending, annotatepass, resendinvites, grantadmin and testchat only)"
         type: boolean
         required: false
         default: false
@@ -322,6 +323,19 @@ jobs:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           ARGS: ${{ inputs.args }}
         run: pnpm exec tsx scripts/pushAudit.ts $ARGS
+
+      # Sends a real chat message between two real members, to prove the chat
+      # notification fires. It calls the same sendDirectMessage the Messages
+      # page calls, so a pass here is the member-facing path working, not a
+      # copy of it. Needs the VAPID keys like any other push, and writes to
+      # somebody's lock screen, so it reports unless apply is ticked.
+      - name: Send a test chat message
+        if: inputs.audit == 'testchat'
+        env:
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          ARGS: ${{ inputs.args }}
+        run: pnpm exec tsx scripts/sendTestChat.ts $ARGS ${{ inputs.apply && '--apply' || '' }}
 
       # Writes down why a pass exists. A balance with nothing behind it looks
       # the same as money gone missing until somebody who was there confirms
