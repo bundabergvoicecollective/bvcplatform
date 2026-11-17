@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Users, Plus, Pencil, Trash2, CreditCard, ChevronDown, ChevronUp, Camera, CalendarDays, UserPlus, Copy, CheckCheck, Mail, Phone, UserCheck, UserX, Clock, SlidersHorizontal, ArrowUpDown, ArrowUp, ArrowDown, History, MinusCircle, Download, TrendingDown } from "lucide-react";
+import { Users, Plus, Pencil, Trash2, CreditCard, ChevronDown, ChevronUp, Camera, CalendarDays, UserPlus, Copy, CheckCheck, Mail, Phone, UserCheck, UserX, Clock, SlidersHorizontal, ArrowUpDown, ArrowUp, ArrowDown, History, MinusCircle, Download, TrendingDown, Search, X } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { getDisplayName } from "@shared/const";
@@ -211,6 +211,122 @@ const VOICE_PART_LABELS = {
   tenor: "Tenor",
   bass: "Bass",
 } as const;
+
+// ─── Search ──────────────────────────────────────────────────────────────────
+
+/** Digits only, with an Australian +61 also written the way people say it. */
+function phoneForms(phone: string | null | undefined): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  // "+61427 030 788" is typed as "0427 030 788". Both forms go in, so either
+  // way of writing it finds the member.
+  return digits.startsWith("61") ? `${digits} 0${digits.slice(2)}` : digits;
+}
+
+/**
+ * Does a member match what was typed?
+ *
+ * Every word has to appear somewhere — "and mc" finds Andy McLucas and Andrea
+ * McLaren but not Andrea Bearham — and it can appear in the name, the email
+ * address, the phone number or the voice part, so "alto low" or "0427" work
+ * as well as a surname. Case and spacing are ignored; so is the formatting of
+ * a phone number, which is stored three different ways in this list.
+ */
+function matchesSearch(
+  m: { firstName?: string | null; lastName?: string | null; name?: string | null; email?: string | null; phone?: string | null; voicePart?: string | null },
+  query: string,
+): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+
+  // A search that is nothing but a phone number is compared as one run of
+  // digits, so spaces typed in the middle of it ("+61 412 298") don't split it
+  // into pieces that are each looked for on their own.
+  const queryDigits = query.replace(/\D/g, "");
+  if (queryDigits.length >= 3 && /^[\d\s+()-]+$/.test(query.trim())) {
+    const local = queryDigits.startsWith("61") ? `0${queryDigits.slice(2)}` : queryDigits;
+    const forms = phoneForms(m.phone).split(" ");
+    return forms.some((f) => f.includes(queryDigits) || f.includes(local));
+  }
+
+  const voice = m.voicePart ? VOICE_PART_LABELS[m.voicePart as keyof typeof VOICE_PART_LABELS] ?? "" : "";
+  const haystack = [m.firstName, m.lastName, m.name, m.email, voice, phoneForms(m.phone)]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => {
+    const digits = w.replace(/\D/g, "");
+    // A word that is mostly a phone number is matched on its digits, so
+    // "0427-030" finds "0427030788".
+    if (digits.length >= 3 && digits.length >= w.length - 2) return haystack.includes(digits);
+    return haystack.includes(w);
+  });
+}
+
+/**
+ * The search box. Large, because the people using it are not all young, and
+ * with a plain clear button rather than relying on Escape or a browser's own
+ * tiny cross, which iOS does not show on every input.
+ */
+function MemberSearch({
+  value, onChange, shown, total,
+}: { value: string; onChange: (v: string) => void; shown: number; total: number }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="relative">
+        <Search
+          className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 pointer-events-none"
+          style={{ color: "oklch(0.52 0.03 240)" }}
+        />
+        <Input
+          type="search"
+          inputMode="search"
+          enterKeyHint="search"
+          autoComplete="off"
+          aria-label="Search members"
+          placeholder="Search by name, email, phone or voice part"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") onChange(""); }}
+          className="h-12 pl-11 pr-12 text-base [&::-webkit-search-cancel-button]:hidden"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            aria-label="Clear search"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-black/5"
+            style={{ color: "oklch(0.45 0.03 240)" }}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+      {value.trim() && (
+        <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }} aria-live="polite">
+          {shown === 0 ? "No members match" : `Showing ${shown} of ${total} members`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function NoSearchMatches({ query, onClear }: { query: string; onClear: () => void }) {
+  return (
+    <Card className="border-0 shadow-sm">
+      <CardContent className="flex flex-col items-center justify-center py-14 gap-3 text-center">
+        <Search className="w-10 h-10" style={{ color: "oklch(0.78 0.17 75)" }} />
+        <p className="font-medium" style={{ color: "oklch(0.22 0.07 240)" }}>
+          Nobody matches “{query.trim()}”
+        </p>
+        <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
+          Check the spelling, or try just part of a first name or surname.
+        </p>
+        <Button variant="outline" onClick={onClear} className="h-10 mt-1">Clear search</Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 const SINGING_EXPERIENCE_LABELS = {
   beginner: "Beginner",
@@ -1486,6 +1602,9 @@ export default function Members() {
   // Admin sort controls
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  // Search applies to both the admin table and the member directory.
+  const [search, setSearch] = useState("");
+  const filtered = (members ?? []).filter((m) => matchesSearch(m as Parameters<typeof matchesSearch>[0], search));
   // Pending approvals
   const pendingQuery = trpc.members.listPending.useQuery(undefined, { enabled: isAdmin });
   const pendingMembers = pendingQuery.data ?? [];
@@ -1531,6 +1650,10 @@ export default function Members() {
             </p>
           </div>
 
+          {!isLoading && members && members.length > 0 && (
+            <MemberSearch value={search} onChange={setSearch} shown={filtered.length} total={members.length} />
+          )}
+
           {isLoading ? (
             <div className="space-y-3">
               {[...Array(5)].map((_, i) => (
@@ -1544,10 +1667,12 @@ export default function Members() {
                 <p className="font-medium" style={{ color: "oklch(0.22 0.07 240)" }}>No members yet</p>
               </CardContent>
             </Card>
+          ) : filtered.length === 0 ? (
+            <NoSearchMatches query={search} onClear={() => setSearch("")} />
           ) : (
             <Card className="border-0 shadow-sm overflow-hidden">
               <div className="divide-y" style={{ borderColor: "oklch(0.94 0.01 240)" }}>
-                {sortMembers(members).map((m) => {
+                {sortMembers(filtered).map((m) => {
                   const displayName = getDisplayName(m, "Unknown");
                   const initials = displayName.charAt(0).toUpperCase();
                   return (
@@ -1691,6 +1816,11 @@ export default function Members() {
           </div>
         )}
 
+        {/* Search */}
+        {!isLoading && members && members.length > 0 && (
+          <MemberSearch value={search} onChange={setSearch} shown={filtered.length} total={members.length} />
+        )}
+
         {/* Sort Controls */}
         {!isLoading && members && members.length > 0 && (
           <div className="flex items-center gap-3 flex-wrap">
@@ -1753,6 +1883,8 @@ export default function Members() {
               </p>
             </CardContent>
           </Card>
+        ) : filtered.length === 0 ? (
+          <NoSearchMatches query={search} onClear={() => setSearch("")} />
         ) : (
           <Card className="border-0 shadow-sm overflow-hidden">
             {/*
@@ -1795,7 +1927,7 @@ export default function Members() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortAdminMembers(members as MemberRow[], sortField, sortDir).map((m) => (
+                  {sortAdminMembers(filtered as MemberRow[], sortField, sortDir).map((m) => (
                     <AdminMemberRow
                       key={m.id}
                       m={m}
