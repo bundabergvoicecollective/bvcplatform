@@ -29,8 +29,18 @@
  * THIS WRITES TO A REAL PERSON'S INBOX AND LOCK SCREEN. Report-only unless
  * --apply. Addresses masked and names cut to initials — this log is public.
  *
+ * ── it takes member ids, not addresses ──
+ *
+ * The workflow echoes its `args` input into the job log verbatim, and that
+ * log is world-readable on a public repo. So an address passed on the command
+ * line would be published no matter how carefully the script masks its own
+ * output. Ids are not personal data and already appear throughout these logs.
+ * Find them with the `push` or `members` audit, which print id and initials
+ * and no addresses. --from= / --to= still take addresses for a local run,
+ * where nothing is published, and refuse to run in Actions.
+ *
  * Usage: DATABASE_URL=… tsx scripts/sendTestChat.ts \
- *          --from=a@example.com --to=b@example.com [--body="…"] [--apply]
+ *          --from-id=1 --to-id=2 [--body="…"] [--apply]
  */
 import mysql from "mysql2/promise";
 import { sendDirectMessage } from "../db";
@@ -41,6 +51,8 @@ const arg = (n: string) => args.find((a) => a.startsWith(`--${n}=`))?.slice(n.le
 const APPLY = args.includes("--apply");
 const FROM = arg("from")?.trim().toLowerCase();
 const TO = arg("to")?.trim().toLowerCase();
+const FROM_ID = arg("from-id") ? Number(arg("from-id")) : undefined;
+const TO_ID = arg("to-id") ? Number(arg("to-id")) : undefined;
 
 const DEFAULT_BODY =
   "Test message from the platform — checking that chat notifications are working. " +
@@ -65,32 +77,57 @@ const PUSH_GRACE_SECONDS = 8;
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  if (!FROM || !TO) throw new Error("Pass --from=a@example.com --to=b@example.com");
-  if (FROM === TO) throw new Error("Sender and recipient are the same address; a sender is never notified.");
+
+  const byId = FROM_ID !== undefined || TO_ID !== undefined;
+  if (byId) {
+    if (!Number.isInteger(FROM_ID) || !Number.isInteger(TO_ID)) {
+      throw new Error("Pass both --from-id= and --to-id= as whole numbers.");
+    }
+    if (FROM_ID === TO_ID) throw new Error("Sender and recipient are the same member; a sender is never notified.");
+  } else {
+    if (!FROM || !TO) throw new Error("Pass --from-id=1 --to-id=2 (find ids with the push or members audit).");
+    if (FROM === TO) throw new Error("Sender and recipient are the same address; a sender is never notified.");
+    // Refused rather than masked: the workflow prints its args input into a
+    // world-readable log before this script gets a chance to hide anything.
+    if (process.env.GITHUB_ACTIONS) {
+      throw new Error(
+        "--from=/--to= take addresses, and this log is public. Use --from-id= and --to-id=.",
+      );
+    }
+  }
   if (!BODY) throw new Error("--body is empty.");
 
   const conn = await mysql.createConnection(url);
   const q = async <T>(sql: string, p: unknown[] = []): Promise<T> => (await conn.query(sql, p))[0] as T;
 
-  const rows = await q<Row[]>(
-    `SELECT u.id, u.email, u.firstName, u.lastName, u.name, u.status,
-            (SELECT count(*) FROM push_subscriptions s WHERE s.userId = u.id) AS devices
-       FROM users u
-      WHERE lower(trim(u.email)) IN (?, ?)`,
-    [FROM, TO],
-  );
-  const byEmail = new Map(rows.map((r) => [r.email.trim().toLowerCase(), r]));
-  const sender = byEmail.get(FROM);
-  const recipient = byEmail.get(TO);
+  const SELECT_COLS = `u.id, u.email, u.firstName, u.lastName, u.name, u.status,
+            (SELECT count(*) FROM push_subscriptions s WHERE s.userId = u.id) AS devices`;
+  const rows = byId
+    ? await q<Row[]>(`SELECT ${SELECT_COLS} FROM users u WHERE u.id IN (?, ?)`, [FROM_ID, TO_ID])
+    : await q<Row[]>(
+        `SELECT ${SELECT_COLS} FROM users u WHERE lower(trim(u.email)) IN (?, ?)`,
+        [FROM, TO],
+      );
 
-  for (const [label, email, row] of [["from", FROM, sender], ["to", TO, recipient]] as const) {
+  const find = (id: number | undefined, email: string | undefined) =>
+    byId ? rows.find((r) => r.id === id) : rows.find((r) => r.email.trim().toLowerCase() === email);
+  const sender = find(FROM_ID, FROM);
+  const recipient = find(TO_ID, TO);
+
+  const shown = (id: number | undefined, email: string | undefined) =>
+    byId ? `#${id}` : mask(email!);
+
+  for (const [label, who, row] of [
+    ["from", shown(FROM_ID, FROM), sender],
+    ["to", shown(TO_ID, TO), recipient],
+  ] as const) {
     if (!row) {
-      console.log(`  ${label}: ${mask(email)} — NO ACCOUNT. Nothing sent.`);
+      console.log(`  ${label}: ${who} — NO ACCOUNT. Nothing sent.`);
       await conn.end();
       process.exit(1);
     }
     console.log(
-      `  ${label}: ${mask(email)}  #${row.id}  ${initials(row.firstName, row.lastName, row.name)}  ` +
+      `  ${label}: #${row.id}  ${initials(row.firstName, row.lastName, row.name)}  ` +
         `${row.status} · ${row.devices} subscribed device(s)`,
     );
   }
