@@ -173,3 +173,57 @@ export async function getSquarePaymentsForDate(
       sourceType: p.sourceType ?? null,
     }));
 }
+
+/** One Square payment, with what an admin needs to recognise it on the night. */
+export interface SquareLivePayment {
+  id: string;
+  orderId: string | null;
+  createdAt: string;
+  /** COMPLETED, APPROVED, PENDING, FAILED or CANCELED. */
+  status: string;
+  amountCents: number;
+  /** CARD (reader tap or online card), EXTERNAL, CASH, WALLET, … */
+  sourceType: string | null;
+  /** CONTACTLESS / EMV / SWIPED = on the reader; KEYED / ON_FILE = online or typed. */
+  entryMethod: string | null;
+  cardBrand: string | null;
+  last4: string | null;
+  buyerEmail: string | null;
+  note: string | null;
+  receiptUrl: string | null;
+}
+
+/**
+ * Every Square payment created between two instants, newest first — every
+ * status, not only completed ones, because a declined tap at the door is
+ * exactly the thing worth seeing while the person is still standing there.
+ *
+ * Pages through Square's cursor up to 300 payments, which is far more than a
+ * week of rehearsals produces.
+ */
+export async function getSquarePaymentsBetween(beginTime: string, endTime: string): Promise<SquareLivePayment[]> {
+  const out: SquareLivePayment[] = [];
+  let page = await squareClient.payments.list({ limit: 100, sortOrder: "DESC", beginTime, endTime });
+  for (let n = 0; n < 3; n++) {
+    for (const p of page.data ?? []) {
+      const card = p.cardDetails;
+      out.push({
+        id: p.id ?? "",
+        orderId: p.orderId ?? null,
+        createdAt: p.createdAt ?? "",
+        status: p.status ?? "",
+        amountCents: p.amountMoney?.amount != null ? Number(p.amountMoney.amount) : 0,
+        sourceType: p.sourceType ?? null,
+        entryMethod: card?.entryMethod ?? null,
+        cardBrand: card?.card?.cardBrand ?? null,
+        last4: card?.card?.last4 ?? null,
+        buyerEmail: p.buyerEmailAddress ?? null,
+        note: p.note ?? null,
+        receiptUrl: p.receiptUrl ?? null,
+      });
+    }
+    if (!page.hasNextPage()) break;
+    page = await page.getNextPage();
+  }
+  return out;
+}

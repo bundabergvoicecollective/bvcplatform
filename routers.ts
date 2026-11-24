@@ -99,6 +99,7 @@ import {
   recordCampaignRecipient,
   finishEmailCampaign,
   findRecentSquareOrder,
+  findPlatformRecordsForSquare,
   recordDoorPayment,
   updateUserProfile,
   listLiveStreams,
@@ -1241,6 +1242,72 @@ const coreRouter = router({
 
   // ─── Square Payments ────────────────────────────────────────────────────────
   payments: router({
+    /**
+     * Square's own record of today's payments, as they land, beside what the
+     * platform has made of each one.
+     *
+     * Everything else here shows a payment only once the platform has
+     * recorded it. A card tapped on the reader with no email address behind
+     * it is never recorded on its own, so until somebody entered it by hand
+     * it was invisible to every screen in the app — while it was sitting in
+     * Square the whole time. This asks Square directly, so a payment shows up
+     * the moment Square has it, and says plainly which ones still need
+     * recording against a member.
+     *
+     * Read-only. It never records or credits anything itself: matching a
+     * stranger's tap to a member is a decision for a person, made from the
+     * member's row, where the duplicate check lives.
+     */
+    liveSquare: adminProcedure
+      .input(z.object({ days: z.number().int().min(1).max(14) }).optional())
+      .query(async ({ input }) => {
+        const days = input?.days ?? 1;
+        // Brisbane has no daylight saving, so +10:00 is right all year.
+        const todayBris = new Date(Date.now() + 10 * 3600_000).toISOString().slice(0, 10);
+        const start = new Date(`${todayBris}T00:00:00+10:00`);
+        start.setUTCDate(start.getUTCDate() - (days - 1));
+        let payments;
+        try {
+          const { getSquarePaymentsBetween } = await import("./square");
+          payments = await getSquarePaymentsBetween(start.toISOString(), new Date().toISOString());
+        } catch (e) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Square did not answer: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+
+        const known = await findPlatformRecordsForSquare(payments.flatMap((p) => [p.id, p.orderId ?? ""]));
+        const passByPrice = new Map<number, PassProductKey>(
+          (["single", "5-pass", "10-pass"] as const).map((k) => [PASS_PRODUCTS[k].amountCents, k]),
+        );
+
+        const rows = payments.map((p) => {
+          const match = known.get(p.id) ?? (p.orderId ? known.get(p.orderId) : undefined) ?? null;
+          const onReader = ["CONTACTLESS", "EMV", "SWIPED"].includes(p.entryMethod ?? "");
+          return {
+            ...p,
+            channel: p.sourceType === "CARD" ? (onReader ? "reader" : "online") : (p.sourceType ?? "other").toLowerCase(),
+            match,
+            // What a completed, unrecorded payment most likely bought.
+            looksLike: !match && p.status === "COMPLETED" ? passByPrice.get(p.amountCents) ?? null : null,
+          };
+        });
+
+        const completed = rows.filter((r) => r.status === "COMPLETED");
+        return {
+          fetchedAt: new Date().toISOString(),
+          since: start.toISOString(),
+          days,
+          payments: rows,
+          totals: {
+            completedCount: completed.length,
+            completedCents: completed.reduce((t, r) => t + r.amountCents, 0),
+            needsRecording: completed.filter((r) => !r.match).length,
+          },
+        };
+      }),
+
     /** Every payment, in Tuesday-to-Monday weeks. Admin only — it is the books. */
     financials: adminProcedure
       .input(z.object({ weeks: z.number().int().min(1).max(104).optional() }).optional())
