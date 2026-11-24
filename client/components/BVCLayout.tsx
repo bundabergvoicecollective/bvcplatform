@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
@@ -33,38 +34,43 @@ import AdminViewingAsMember from "./AdminViewingAsMember";
 import { getLoginUrl } from "@/const";
 import PendingApproval from "@/pages/PendingApproval";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { section?: string; href: string; label: string; icon: React.ElementType; roles: string[] }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["user", "admin"] },
   { href: "/notifications", label: "Notifications", icon: Bell, roles: ["user", "admin"] },
   { href: "/announcements", label: "Announcements", icon: Megaphone, roles: ["user", "admin"] },
-  { href: "/attendance", label: "Attendance", icon: Calendar, roles: ["admin"] },
+  { section: "Rehearsals", href: "/attendance", label: "Attendance", icon: Calendar, roles: ["admin"] },
   { href: "/live-streams", label: "Live Rehearsals", icon: Video, roles: ["user", "admin"] },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, roles: ["user", "admin"] },
   { href: "/events", label: "Performances", icon: CalendarDays, roles: ["user", "admin"] },
-  { href: "/gallery", label: "Gallery", icon: Images, roles: ["user", "admin"] },
+  { section: "Community", href: "/gallery", label: "Gallery", icon: Images, roles: ["user", "admin"] },
   { href: "/messages", label: "Chat", icon: MessageCircle, roles: ["user", "admin"] },
   { href: "/groups", label: "Groups", icon: Users2, roles: ["user", "admin"] },
   { href: "/members", label: "Members", icon: Users, roles: ["user", "admin"] },
-  { href: "/library", label: "Music Library", icon: Music2, roles: ["user", "admin"] },
+  { section: "Music", href: "/library", label: "Music Library", icon: Music2, roles: ["user", "admin"] },
   { href: "/rehearsal-recordings", label: "Rehearsal Recordings", icon: Headphones, roles: ["user", "admin"] },
   { href: "/documents", label: "Forms & Documents", icon: FileText, roles: ["user", "admin"] },
-  { href: "/shop", label: "Shop", icon: ShoppingBag, roles: ["user", "admin"] },
+  { section: "Account", href: "/shop", label: "Shop", icon: ShoppingBag, roles: ["user", "admin"] },
   { href: "/payments", label: "Payments", icon: CreditCard, roles: ["user", "admin"] },
   { href: "/financials", label: "Financials", icon: Banknote, roles: ["admin"] },
   { href: "/profile", label: "My Profile", icon: UserCircle, roles: ["user", "admin"] },
   { href: "/admin", label: "Admin Panel", icon: Settings, roles: ["admin"] },
 ];
 
-// Sidebar colour tokens — pure black left panel
-const SIDEBAR_BG = "oklch(0.17 0.045 245)";
-/* A rail with a top-to-bottom fall and a wash of teal at the foot: the
-   difference between a dark panel and a surface with a light source. */
+// Sidebar colour tokens — black.
+//
+// It was black once, went navy in the November overhaul, and on a phone the
+// navy top bar laid over a light page came out slate grey. Black is what the
+// choir asked for, and it is what makes the gold logo and the gold active
+// item read as gold rather than as yellow on blue.
+//
+// Neutral, not tinted: #09090b, with a faint warm glow at the top so the
+// panel has a light source rather than being a flat hole in the page.
+const SIDEBAR_BG = "#09090b";
 const SIDEBAR_GRADIENT =
-  "linear-gradient(180deg, oklch(0.20 0.05 245) 0%, oklch(0.155 0.042 245) 55%, oklch(0.14 0.04 248) 100%)";
-const SIDEBAR_BORDER = "oklch(0.26 0.04 245)";
-const SIDEBAR_TEXT_MUTED = "oklch(0.62 0.02 245)";
-const SIDEBAR_TEXT = "oklch(0.84 0.015 245)";
-const SIDEBAR_HOVER_BG = "oklch(0.24 0.05 245)";
+  "radial-gradient(120% 34% at 0% 0%, oklch(0.78 0.17 75 / 0.10), transparent 70%), linear-gradient(180deg, #111113 0%, #09090b 60%)";
+const SIDEBAR_BORDER = "rgb(255 255 255 / 0.07)";
+const SIDEBAR_TEXT_MUTED = "#8b8b94";
+const SIDEBAR_TEXT = "#d4d4d8";
 const GOLD = "oklch(0.78 0.17 75)";
 const TEAL = "oklch(0.55 0.14 185)";
 
@@ -129,7 +135,17 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
   }
 
   const role = user.role as "user" | "admin";
-  const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(role));
+  // Each item belongs to the last section declared above it, and a heading
+  // shows over the first item of a section that this person can see. Tying
+  // the heading to one item would lose "Rehearsals" for members, who cannot
+  // see Attendance, the item it sits on.
+  let currentSection = "";
+  const visibleNav = NAV_ITEMS.map((n) => {
+    if (n.section) currentSection = n.section;
+    return { ...n, group: currentSection };
+  })
+    .filter((n) => n.roles.includes(role))
+    .map((n, i, all) => ({ ...n, heading: n.group && n.group !== all[i - 1]?.group ? n.group : undefined }));
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full" style={{ background: SIDEBAR_BG, backgroundImage: SIDEBAR_GRADIENT }}>
@@ -153,7 +169,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {visibleNav.map(({ href, label, icon: Icon }) => {
+        {visibleNav.map(({ heading, href, label, icon: Icon }) => {
           const active = location === href || (href !== "/" && location.startsWith(href));
           const badgeCount =
             label === "Notifications" ? unreadCount :
@@ -161,8 +177,19 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
             label === "Chat" ? unreadMsgCount : 0;
 
           return (
+            <React.Fragment key={href}>
+            {/* A quiet heading over each group. Twenty items in one column is
+                a list you read; in five short groups it is one you scan. The
+                order is exactly what it was. */}
+            {heading && (
+              <p
+                className="px-3 pt-5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+                style={{ color: SIDEBAR_TEXT_MUTED }}
+              >
+                {heading}
+              </p>
+            )}
             <Link
-              key={href}
               href={href}
               onClick={() => setSidebarOpen(false)}
               className={cn(
@@ -171,14 +198,14 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
                 "active:scale-[0.98]",
                 active
                   ? "font-semibold [box-shadow:0_4px_14px_-4px_oklch(0.78_0.17_75_/_0.55)]"
-                  : "hover:bg-[oklch(0.24_0.05_245)]",
+                  : "hover:bg-white/[0.06] hover:text-white",
               )}
               style={
                 active
                   ? {
                       backgroundImage:
                         "linear-gradient(135deg, oklch(0.84 0.16 80) 0%, oklch(0.76 0.17 72) 100%)",
-                      color: "oklch(0.18 0.05 245)",
+                      color: "#09090b",
                     }
                   : { color: SIDEBAR_TEXT }
               }
@@ -208,13 +235,14 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
                 </span>
               )}
             </Link>
+            </React.Fragment>
           );
         })}
       </nav>
 
       {/* User footer */}
-      <div className="px-4 py-4 border-t" style={{ borderColor: SIDEBAR_BORDER }}>
-        <div className="flex items-center gap-3 mb-3">
+      <div className="px-3 py-3 border-t" style={{ borderColor: SIDEBAR_BORDER }}>
+        <div className="flex items-center gap-3 mb-2 px-2 py-2 rounded-xl bg-white/[0.04]">
           {(user as any).avatarUrl ? (
             <img
               src={(user as any).avatarUrl}
@@ -241,10 +269,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
         </div>
         <button
           onClick={() => logout()}
-          className="flex items-center gap-2 text-xs w-full px-2 py-1.5 rounded-md transition-colors"
-          style={{ color: SIDEBAR_TEXT_MUTED }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = SIDEBAR_HOVER_BG; (e.currentTarget as HTMLElement).style.color = "#f3f4f6"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = SIDEBAR_TEXT_MUTED; }}
+          className="flex items-center gap-2 text-xs w-full px-2.5 py-2 rounded-lg text-[#8b8b94] hover:bg-white/[0.06] hover:text-white [transition:background-color_var(--dur-fast)_var(--ease-bvc),color_var(--dur-fast)_var(--ease-bvc)]"
         >
           <LogOut className="w-3.5 h-3.5" />
           Sign out
@@ -267,7 +292,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
       {sidebarOpen && (
         <div className="md:hidden fixed inset-0 z-40 flex">
           <div
-            className="fixed inset-0 bg-[oklch(0.14_0.04_245_/_0.6)] supports-[backdrop-filter:blur(0px)]:backdrop-blur-sm animate-fade-in"
+            className="fixed inset-0 bg-black/60 supports-[backdrop-filter:blur(0px)]:backdrop-blur-sm animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
           <aside
@@ -289,9 +314,13 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
       {/* Main content */}
       <div className="flex-1 md:ml-60 flex flex-col min-h-screen">
         {/* Mobile topbar */}
+        {/* Black, and nearly opaque. The old bar was translucent navy, and
+            over a light page translucent navy is grey. The padding-top keeps
+            the logo clear of the clock when BVC is opened from the Home
+            Screen, where the page runs up under the status bar. */}
         <header
-          className="md:hidden flex items-center justify-between px-4 py-3 sticky top-0 z-20 glass border-b"
-          style={{ borderColor: "oklch(0.30 0.04 245 / 0.6)" }}
+          className="md:hidden flex items-center justify-between px-4 h-14 box-content pt-[env(safe-area-inset-top)] sticky top-0 z-20 glass border-b"
+          style={{ borderColor: SIDEBAR_BORDER }}
         >
           <button
             onClick={() => setSidebarOpen(true)}
@@ -318,7 +347,7 @@ export default function BVCLayout({ children, noPadding }: { children: React.Rea
                 // min-width rather than a fixed 16px square: at two digits a
                 // fixed square clipped the number, and a member with twelve
                 // unread saw "1".
-                className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 text-[11px] leading-none rounded-full flex items-center justify-center font-bold animate-badge-pop [box-shadow:0_0_0_2px_oklch(0.17_0.045_245)]"
+                className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 text-[11px] leading-none rounded-full flex items-center justify-center font-bold animate-badge-pop [box-shadow:0_0_0_2px_#09090b]"
                 style={{ background: TEAL, color: "white" }}
               >
                 {unreadCount > 99 ? "99+" : unreadCount}

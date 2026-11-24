@@ -16,7 +16,13 @@
  * repository: printing the html or text would hand anyone reading the log a
  * live invite. Addresses are masked for the same reason.
  *
+ * Without --id it lists the most recent messages instead — for when the id
+ * is only in the Cloud Run log, which is the usual case for "I pressed Send
+ * a test and nothing came". Subjects are printed (none carries a token);
+ * bodies never are.
+ *
  * Usage: SMTP_PASS=… tsx scripts/resendLookup.ts --id=<resend message id>
+ *        SMTP_PASS=… tsx scripts/resendLookup.ts [--recent=15]
  */
 // This file imports nothing — fetch is global — and a TypeScript file with
 // no import or export is a script, not a module, so its `main` would collide
@@ -25,6 +31,7 @@
 export {};
 
 const ID = process.argv.find((a) => a.startsWith("--id="))?.slice("--id=".length);
+const RECENT = Math.min(50, Math.max(1, Number(process.argv.find((a) => a.startsWith("--recent="))?.slice(9) ?? 15) || 15));
 
 /** a.mclucas@example.com → a.m•••@e•••.com */
 function mask(addr: string): string {
@@ -36,15 +43,17 @@ function mask(addr: string): string {
 }
 
 async function main() {
-  if (!ID) throw new Error("Pass --id=<resend message id>.");
-  const key = (process.env.RESEND_API_KEY ?? process.env.SMTP_PASS)?.trim();
+  const key = (process.env.RESEND_API_KEY?.trim() || process.env.SMTP_PASS?.trim());
   if (!key) throw new Error("Neither RESEND_API_KEY nor SMTP_PASS is set.");
   console.log(`Using ${process.env.RESEND_API_KEY?.trim() ? "RESEND_API_KEY" : "SMTP_PASS"}.\n`);
   if (!key.startsWith("re_")) {
     console.log("Note: that value does not look like a Resend API key (re_…). If this 401s, that is why.\n");
   }
 
-  const res = await fetch(`https://api.resend.com/emails/${encodeURIComponent(ID)}`, {
+  const url = ID
+    ? `https://api.resend.com/emails/${encodeURIComponent(ID)}`
+    : `https://api.resend.com/emails?limit=${RECENT}`;
+  const res = await fetch(url, {
     headers: { authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(30_000),
   });
@@ -69,7 +78,29 @@ async function main() {
     );
     process.exit(1);
   }
-  if (!res.ok) throw new Error(`Resend answered HTTP ${res.status}.`);
+  if (!res.ok) throw new Error(`Resend answered HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+
+  if (!ID) {
+    const list = (await res.json()) as {
+      data?: { id: string; to?: string[] | string; subject?: string; created_at?: string; last_event?: string }[];
+    };
+    const rows = list.data ?? [];
+    console.log(`The ${rows.length} most recent message(s) Resend holds, newest first (Brisbane time):\n`);
+    for (const m of rows) {
+      const to = Array.isArray(m.to) ? m.to : m.to ? [m.to] : [];
+      const when = m.created_at
+        ? new Date(m.created_at).toLocaleString("en-AU", { timeZone: "Australia/Brisbane", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+        : "(no time)";
+      console.log(`  ${when.padEnd(18)} ${(m.last_event ?? "?").padEnd(17)} ${to.map(mask).join(", ").padEnd(24)} ${m.subject ?? ""}`);
+      console.log(`  ${"".padEnd(18)} id ${m.id}`);
+    }
+    console.log(
+      "\nStatus: delivered = reached the mailbox (if missing, look in spam); bounced =\n" +
+        "the receiving server refused it; complained = marked as spam; sent = handed\n" +
+        "over, no confirmation yet; delivery_delayed = still being retried.",
+    );
+    return;
+  }
 
   const body = (await res.json()) as {
     id?: string;
