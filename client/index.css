@@ -15,10 +15,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --radius: 0.875rem;
+  --radius: 1rem;
 
   /* Neutral base */
-  --color-background: oklch(0.975 0.006 240);
+  --color-background: oklch(0.981 0.004 250);
   --color-foreground: oklch(0.18 0.04 240);
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.18 0.04 240);
@@ -37,11 +37,11 @@
   --color-accent: oklch(0.78 0.17 75);
   --color-accent-foreground: oklch(0.18 0.04 240);
 
-  --color-muted: oklch(0.94 0.01 240);
+  --color-muted: oklch(0.955 0.006 250);
   --color-muted-foreground: oklch(0.52 0.03 240);
 
   --color-destructive: oklch(0.577 0.245 27.325);
-  --color-border: oklch(0.91 0.008 240);
+  --color-border: oklch(0.92 0.006 250);
   --color-input: oklch(0.88 0.01 240);
   --color-ring: oklch(0.55 0.14 185);
 
@@ -71,8 +71,11 @@
 :root {
   --shadow-sm: 0 1px 2px oklch(0.22 0.07 240 / 0.05),
                0 1px 3px oklch(0.22 0.07 240 / 0.04);
-  --shadow-card: 0 1px 2px oklch(0.22 0.07 240 / 0.04),
-                 0 4px 16px -4px oklch(0.22 0.07 240 / 0.08);
+  /* 2026: edges, not shadows. A card is told apart from the page by a
+     hairline and the faintest lift; heavy shadows read as ten years old. */
+  --shadow-card: 0 0 0 1px oklch(0.22 0.07 240 / 0.045),
+                 0 1px 1px oklch(0.22 0.07 240 / 0.03),
+                 0 2px 10px -4px oklch(0.22 0.07 240 / 0.06);
   --shadow-raised: 0 2px 4px oklch(0.22 0.07 240 / 0.05),
                    0 12px 28px -8px oklch(0.22 0.07 240 / 0.14);
   --shadow-overlay: 0 8px 12px -6px oklch(0.22 0.07 240 / 0.12),
@@ -99,8 +102,8 @@
        is not a gradient anybody notices; it is why the page stops reading as
        a flat grey sheet. */
     background-image:
-      radial-gradient(60rem 40rem at 110% -10%, oklch(0.55 0.14 185 / 0.055), transparent 60%),
-      radial-gradient(50rem 35rem at -10% 110%, oklch(0.78 0.17 75 / 0.05), transparent 60%);
+      radial-gradient(60rem 40rem at 110% -10%, oklch(0.55 0.14 185 / 0.045), transparent 60%),
+      radial-gradient(50rem 35rem at -10% 110%, oklch(0.78 0.17 75 / 0.04), transparent 60%);
     background-attachment: fixed;
   }
   html, body, #root {
@@ -126,8 +129,17 @@
   /* Headings in the display face, set tight. Playfair at default tracking
      and leading looks like a document; closed up it looks like a masthead. */
   .font-display {
-    letter-spacing: -0.015em;
-    line-height: 1.15;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+  }
+
+  /* Page titles. Every page sets its h1 as text-2xl inline; one rule here
+     makes them all larger and tighter, which is most of what makes a screen
+     look current rather than like a form. Fluid, so a phone gets a title
+     that fits and a desktop gets one with presence. */
+  main h1.font-display {
+    font-size: clamp(1.75rem, 1.35rem + 1.6vw, 2.35rem);
+    letter-spacing: -0.025em;
   }
 
   /* A scrollbar that belongs to this app rather than to the operating
@@ -145,6 +157,19 @@
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: oklch(0.72 0.02 240); }
+}
+
+/* Page headers on a phone. Most pages put the title on the left and their
+   buttons on the right in one row; with two buttons on a 390px screen the
+   second ran off the edge (Members: "Add Me…"). On narrow screens a header
+   row that holds a page title may now wrap, so the buttons drop beneath the
+   title instead. Browsers without :has() keep the old layout, no worse. */
+@media (max-width: 639px) {
+  main .flex.justify-between:has(> div > h1.font-display),
+  main .flex.justify-between:has(> div > div > h1.font-display) {
+    flex-wrap: wrap;
+    row-gap: 0.875rem;
+  }
 }
 
 /* ── Utility overrides ─────────────────────────────────────────────────────── */
@@ -237,18 +262,11 @@
 }
 .lift:hover { box-shadow: var(--shadow-raised); }
 
-/* Glass: used on the sticky mobile header, where content scrolls underneath
-   and a solid bar would look pasted on. Falls back to a solid colour where
-   backdrop-filter is unsupported, which is why the background is set first. */
+/* The sticky mobile header: solid black. The old bar was 72% navy, and with a
+   white page showing through it came out slate grey, which is what was
+   reported. Even 92% black reads as charcoal over white, so it is opaque. */
 .glass {
-  background: oklch(0.18 0.05 240 / 0.86);
-}
-@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .glass {
-    background: oklch(0.18 0.05 240 / 0.72);
-    -webkit-backdrop-filter: blur(14px) saturate(160%);
-    backdrop-filter: blur(14px) saturate(160%);
-  }
+  background: #09090b;
 }
 
 @keyframes fadeIn {
@@ -308,7 +326,7 @@ select:-webkit-autofill {
 .chat-input-dark input,
 .chat-input-dark textarea {
   color: oklch(0.92 0.01 240);
-  background-color: oklch(0.18 0.05 240);
+  background-color: #18181b;
   -webkit-text-fill-color: oklch(0.92 0.01 240);
 }
 

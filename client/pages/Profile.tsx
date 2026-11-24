@@ -226,7 +226,7 @@ export default function Profile() {
     <BVCLayout>
       <div className="max-w-2xl space-y-6">
         {/* ── Hero header ──────────────────────────────────────────────── */}
-        <Card className="border-0 shadow-sm overflow-hidden">
+        <Card className="border-0 shadow-sm overflow-hidden py-0 gap-0">
           {/* Colour band */}
           <div className="h-24" style={{ background: `linear-gradient(135deg, ${TEAL}, oklch(0.45 0.14 220))` }} />
           <CardContent className="pt-0 pb-6 px-6">

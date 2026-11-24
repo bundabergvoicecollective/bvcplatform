@@ -64,11 +64,14 @@ export default function NotificationPrompt() {
   const blocked = push.permission === "denied";
 
   return (
+    // A card inside the page rather than a slab across the top of it: same
+    // words, same buttons, but it reads as a prompt from the app instead of a
+    // warning bolted on above it.
     <div
-      className="flex items-start gap-3 px-4 py-3 border-b"
+      className="mx-4 mt-4 sm:mx-6 sm:mt-6 flex items-start gap-3 px-4 py-3.5 rounded-2xl border [box-shadow:var(--shadow-card)] animate-fade-in"
       style={{
-        background: blocked ? "oklch(0.97 0.02 240)" : "oklch(0.96 0.04 75)",
-        borderColor: blocked ? "oklch(0.90 0.02 240)" : "oklch(0.88 0.06 75)",
+        background: blocked ? "oklch(0.975 0.012 240)" : "oklch(0.97 0.035 80)",
+        borderColor: blocked ? "oklch(0.91 0.015 240)" : "oklch(0.89 0.06 78)",
       }}
     >
       <div
@@ -131,7 +134,7 @@ export default function NotificationPrompt() {
       <button
         onClick={dismiss}
         aria-label="Not now"
-        className="shrink-0 p-1 rounded hover:bg-black/5"
+        className="shrink-0 -mr-1 -mt-1 size-9 rounded-full flex items-center justify-center hover:bg-black/5"
         style={{ color: "oklch(0.50 0.03 240)" }}
       >
         <X className="w-4 h-4" />

@@ -1144,7 +1144,7 @@ function AdminMemberRow({
             </div>
           </div>
         </td>
-        <td className="px-4 py-3 text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
+        <td className="px-4 py-3 text-sm whitespace-nowrap tabular-nums" style={{ color: "oklch(0.52 0.03 240)" }}>
           {m.phone ?? "—"}
         </td>
         <td className="px-4 py-3">
@@ -1847,11 +1847,11 @@ export default function Members() {
                         setSortDir("asc");
                       }
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
+                    className="inline-flex items-center gap-1.5 px-3.5 h-9 rounded-full text-sm font-medium transition-all"
                     style={{
-                      background: isActive ? "oklch(0.22 0.07 240)" : "oklch(0.94 0.01 240)",
+                      background: isActive ? "#09090b" : "white",
                       color: isActive ? "white" : "oklch(0.35 0.05 240)",
-                      border: isActive ? "1.5px solid oklch(0.22 0.07 240)" : "1.5px solid oklch(0.88 0.02 240)",
+                      border: isActive ? "1px solid #09090b" : "1px solid oklch(0.90 0.008 250)",
                     }}
                   >
                     {labels[field]}
@@ -1886,7 +1886,7 @@ export default function Members() {
         ) : filtered.length === 0 ? (
           <NoSearchMatches query={search} onClear={() => setSearch("")} />
         ) : (
-          <Card className="border-0 shadow-sm overflow-hidden">
+          <Card className="border-0 shadow-sm overflow-hidden py-0 gap-0">
             {/*
               The column headings stay put while the list scrolls. Seventy-odd
               members is well past a screenful, and two of these columns are
@@ -1914,12 +1914,12 @@ export default function Members() {
             <div className="overflow-auto max-h-[70svh]">
               <table className="w-full text-sm">
                 <thead>
-                  <tr style={{ background: "oklch(0.22 0.07 240)" }}>
+                  <tr style={{ background: "#09090b" }}>
                     {["Member", "Phone", "Role", "Member Since", "Sessions Remaining", "Sessions Attended", "Actions"].map((h) => (
                       <th
                         key={h}
                         className="text-left px-4 py-3 font-semibold text-white sticky top-0 z-10"
-                        style={{ background: "oklch(0.22 0.07 240)" }}
+                        style={{ background: "#09090b" }}
                       >
                         {h}
                       </th>

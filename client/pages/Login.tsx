@@ -74,11 +74,11 @@ export default function Login() {
     <div
       className="min-h-screen flex items-center justify-center px-4 py-10"
       style={{
-        background: "oklch(0.16 0.045 245)",
+        background: "#09090b",
         backgroundImage:
           "radial-gradient(42rem 30rem at 50% -10%, oklch(0.78 0.17 75 / 0.18), transparent 65%)," +
           "radial-gradient(38rem 28rem at 15% 110%, oklch(0.55 0.14 185 / 0.20), transparent 60%)," +
-          "linear-gradient(180deg, oklch(0.19 0.05 245) 0%, oklch(0.13 0.04 248) 100%)",
+          "linear-gradient(180deg, #121214 0%, #09090b 100%)",
       }}
     >
       <div className="w-full max-w-sm space-y-6 animate-slide-up">
@@ -179,7 +179,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full h-12 rounded-xl text-white text-base font-semibold [box-shadow:0_6px_18px_-6px_oklch(0.55_0.14_185_/_0.7)] [background-image:linear-gradient(135deg,oklch(0.60_0.14_185)_0%,oklch(0.50_0.13_190)_100%)] [transition:transform_var(--dur-fast)_var(--ease-bvc),box-shadow_var(--dur-fast)_var(--ease-bvc),opacity_var(--dur-fast)_var(--ease-bvc)] hover:[box-shadow:0_10px_26px_-8px_oklch(0.55_0.14_185_/_0.8)] active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
+            className="w-full h-12 rounded-full text-white text-base font-semibold [box-shadow:0_6px_18px_-6px_oklch(0.55_0.14_185_/_0.7)] [background-image:linear-gradient(135deg,oklch(0.60_0.14_185)_0%,oklch(0.50_0.13_190)_100%)] [transition:transform_var(--dur-fast)_var(--ease-bvc),box-shadow_var(--dur-fast)_var(--ease-bvc),opacity_var(--dur-fast)_var(--ease-bvc)] hover:[box-shadow:0_10px_26px_-8px_oklch(0.55_0.14_185_/_0.8)] active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>

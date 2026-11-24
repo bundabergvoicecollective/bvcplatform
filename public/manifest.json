@@ -4,8 +4,8 @@
   "description": "The official app for Bundaberg Voice Collective members.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0e1a2b",
-  "theme_color": "#2a8c8c",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
   "icons": [
     {
       "src": "/icons/icon-192.png",

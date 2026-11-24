@@ -33,13 +33,13 @@ function StatCard({ icon: Icon, label, value, color }: { icon: any; label: strin
   return (
     <Card className="border-0 shadow-sm">
       <CardContent className="pt-5 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `${color}22` }}>
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+          <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `color-mix(in oklch, ${color} 14%, white)` }}>
             <Icon className="w-5 h-5" style={{ color }} />
           </div>
-          <div>
-            <p className="text-2xl font-bold" style={{ color: NAVY }}>{value}</p>
-            <p className="text-xs" style={{ color: "oklch(0.55 0.03 240)" }}>{label}</p>
+          <div className="min-w-0">
+            <p className="text-[1.75rem] leading-none font-bold tracking-tight tabular-nums" style={{ color: NAVY }}>{value}</p>
+            <p className="text-xs mt-1.5" style={{ color: "oklch(0.55 0.03 240)" }}>{label}</p>
           </div>
         </div>
       </CardContent>
@@ -1001,7 +1001,7 @@ export default function AdminPanel() {
 
         {/* Tabs */}
         <Tabs defaultValue="announcements">
-          <TabsList className="flex-wrap h-auto gap-1 bg-gray-100 p-1">
+          <TabsList className="flex-wrap h-auto gap-1 p-1.5 rounded-2xl justify-start w-full sm:w-fit [&>*]:flex-none [&>*]:h-9">
             <TabsTrigger value="announcements" className="text-xs"><Megaphone className="w-3.5 h-3.5 mr-1" />Announcements</TabsTrigger>
             <TabsTrigger value="events" className="text-xs"><CalendarDays className="w-3.5 h-3.5 mr-1" />Events</TabsTrigger>
             <TabsTrigger value="members" className="text-xs"><Users className="w-3.5 h-3.5 mr-1" />Members</TabsTrigger>

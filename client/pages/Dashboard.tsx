@@ -46,23 +46,26 @@ function StatCard({
   href?: string;
 }) {
   const inner = (
-    <CardContent className="p-5 flex items-center gap-4">
+    // On a phone the icon sits above the number rather than beside it. Side
+    // by side, two tiles to a row left about 90px for "Announcements", which
+    // ran off the card. Stacked, the number gets the width and reads first.
+    <CardContent className="relative p-4 sm:p-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
       <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+        className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center shrink-0 [box-shadow:inset_0_1px_0_rgb(255_255_255_/_0.22)]"
         style={{ background: accent ?? "oklch(0.94 0.01 240)" }}
       >
         <Icon className="w-5 h-5" style={{ color: accent ? "white" : "oklch(0.55 0.14 185)" }} />
       </div>
-      <div>
-        <p className="text-2xl font-bold" style={{ color: "oklch(0.18 0.04 240)" }}>
+      <div className="min-w-0">
+        <p className="text-[1.75rem] leading-none font-bold tracking-tight tabular-nums" style={{ color: "oklch(0.18 0.04 240)" }}>
           {value}
         </p>
-        <p className="text-sm" style={{ color: "oklch(0.52 0.03 240)" }}>
+        <p className="text-sm mt-1.5 leading-snug" style={{ color: "oklch(0.52 0.03 240)" }}>
           {label}
         </p>
       </div>
       {href && (
-        <div className="ml-auto shrink-0 opacity-40">
+        <div className="absolute top-4 right-4 sm:static sm:ml-auto shrink-0 opacity-40">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "oklch(0.35 0.04 240)" }}><path d="M9 18l6-6-6-6"/></svg>
         </div>
       )}
@@ -74,14 +77,14 @@ function StatCard({
     // instance has scaled down. This navigates in place, instantly.
     return (
       <Link href={href} className="block">
-        <Card className="border-0 cursor-pointer lift active:scale-[0.98] h-full">
+        <Card className="border-0 py-0 gap-0 cursor-pointer lift active:scale-[0.98] h-full">
           {inner}
         </Card>
       </Link>
     );
   }
   return (
-    <Card className="border-0 h-full">
+    <Card className="border-0 py-0 gap-0 h-full">
       {inner}
     </Card>
   );
