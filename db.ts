@@ -4132,3 +4132,96 @@ export async function findPlatformRecordsForSquare(ids: string[]): Promise<Map<s
   }
   return found;
 }
+
+// ─── Not seen lately ─────────────────────────────────────────────────────────
+
+export type NotSeenMember = {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  remaining: number;
+  lastPresent: string | null;
+  timesPresent: number;
+  joined: string;
+  lastSignedIn: string | null;
+  hasPassword: boolean;
+};
+
+/**
+ * Who to ask about, by name: the same two lists as the attendancesweep audit,
+ * shown inside the admin panel because the audit runs in a public log and can
+ * only print initials.
+ *
+ *   quiet  — active, holding unused sessions, and not marked present at any of
+ *            the last three rehearsals that have started. They paid to come.
+ *   never  — active and never marked present at anything at all. Some never
+ *            came; one holding sessions, or signing in, may be coming and not
+ *            being ticked, which is how one member went four months unrecorded.
+ *
+ * Neither is proof of anything. A missing row looks the same whether nobody
+ * ticked them or they stayed home; this says who to ask, not who is wrong.
+ */
+export async function getNotSeenLately(recent = 3): Promise<{ sessions: { id: number; date: string }[]; quiet: NotSeenMember[]; never: NotSeenMember[] }> {
+  if (!db) return { sessions: [], quiet: [], never: [] };
+
+  const [sessionRows] = (await db.execute(sql`
+    SELECT id, DATE_FORMAT(DATE_ADD(sessionDate, INTERVAL 10 HOUR), '%Y-%m-%d') AS d
+      FROM sessions WHERE sessionDate <= now()
+     ORDER BY sessionDate DESC LIMIT ${recent}`)) as unknown as [{ id: number; d: string }[]];
+  const ids = sessionRows.map((r) => Number(r.id));
+
+  const memberCols = sql`
+    u.id, u.firstName, u.lastName, u.name, u.email, u.phone,
+    DATE_FORMAT(DATE_ADD(u.createdAt, INTERVAL 10 HOUR), '%Y-%m-%d') AS joined,
+    DATE_FORMAT(DATE_ADD(u.lastSignedIn, INTERVAL 10 HOUR), '%Y-%m-%d') AS lastSignedIn,
+    (u.passwordHash IS NOT NULL AND u.passwordHash <> '') AS hasPassword,
+    COALESCE((SELECT SUM(p.remainingSessions) FROM passes p WHERE p.userId = u.id AND p.active = 1), 0) AS remaining,
+    (SELECT DATE_FORMAT(DATE_ADD(MAX(s.sessionDate), INTERVAL 10 HOUR), '%Y-%m-%d')
+       FROM attendance a JOIN sessions s ON s.id = a.sessionId
+      WHERE a.userId = u.id AND a.attended = 1) AS lastPresent,
+    (SELECT count(*) FROM attendance a WHERE a.userId = u.id AND a.attended = 1) AS timesPresent`;
+
+  type Row = {
+    id: number; firstName: string | null; lastName: string | null; name: string | null; email: string | null;
+    phone: string | null; joined: string; lastSignedIn: string | null; hasPassword: number;
+    remaining: number | string; lastPresent: string | null; timesPresent: number | string;
+  };
+  const shape = (r: Row): NotSeenMember => ({
+    id: Number(r.id),
+    name: [r.firstName, r.lastName].filter(Boolean).join(" ") || r.name || r.email || `Member #${r.id}`,
+    email: r.email,
+    phone: r.phone,
+    remaining: Number(r.remaining),
+    lastPresent: r.lastPresent,
+    timesPresent: Number(r.timesPresent),
+    joined: r.joined,
+    lastSignedIn: r.lastSignedIn,
+    hasPassword: Boolean(Number(r.hasPassword)),
+  });
+
+  const [neverRows] = (await db.execute(sql`
+    SELECT ${memberCols} FROM users u
+     WHERE u.status = 'active'
+       AND NOT EXISTS (SELECT 1 FROM attendance a WHERE a.userId = u.id AND a.attended = 1)
+     ORDER BY u.createdAt DESC`)) as unknown as [Row[]];
+
+  let quiet: NotSeenMember[] = [];
+  if (ids.length) {
+    const [quietRows] = (await db.execute(sql`
+      SELECT ${memberCols} FROM users u
+       WHERE u.status = 'active'
+         AND COALESCE((SELECT SUM(p.remainingSessions) FROM passes p WHERE p.userId = u.id AND p.active = 1), 0) > 0
+         AND EXISTS (SELECT 1 FROM attendance a WHERE a.userId = u.id AND a.attended = 1)
+         AND NOT EXISTS (SELECT 1 FROM attendance a WHERE a.userId = u.id AND a.attended = 1
+                          AND a.sessionId IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}))
+       ORDER BY remaining DESC, lastPresent`)) as unknown as [Row[]];
+    quiet = quietRows.map(shape);
+  }
+
+  return {
+    sessions: sessionRows.map((r) => ({ id: Number(r.id), date: r.d })),
+    quiet,
+    never: neverRows.map(shape),
+  };
+}

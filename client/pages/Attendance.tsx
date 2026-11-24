@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import NotSeenLately from "@/components/NotSeenLately";
 import { trpc } from "@/lib/trpc";
 import BVCLayout from "@/components/BVCLayout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -821,6 +822,8 @@ export default function Attendance() {
           </div>
           <CreateSessionDialog onCreated={() => setRefresh((v) => v + 1)} />
         </div>
+
+        <NotSeenLately />
 
         {isLoading ? (
           <div className="space-y-3">
