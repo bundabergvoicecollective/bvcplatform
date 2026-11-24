@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import {
   Users, CalendarDays, Megaphone, Music, CreditCard, MessageSquare,
   Plus, Trash2, Edit2, Shield, ShieldOff, CheckCircle, XCircle,
-  BarChart3, Upload, Bell, Settings, Eye, DollarSign, AlertTriangle, History, Search, Filter, Download, Mail
+  BarChart3, Upload, Bell, Settings, Eye, DollarSign, AlertTriangle, History, Search, Filter, Download, Mail, Radio
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -23,6 +23,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import BVCLayout from "@/components/BVCLayout";
 import EmailCampaignsTab from "@/components/EmailCampaignsTab";
+import LivePaymentsTab from "@/components/LivePaymentsTab";
 import { getDisplayName } from "@shared/const";
 
 const GOLD = "oklch(0.78 0.17 75)";
@@ -31,14 +32,14 @@ const NAVY = "oklch(0.22 0.07 240)";
 
 function StatCard({ icon: Icon, label, value, color }: { icon: any; label: string; value: number | string; color: string }) {
   return (
-    <Card className="border-0 shadow-sm">
-      <CardContent className="pt-5 pb-4">
-        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+    <Card className="border-0 shadow-sm py-0 gap-0">
+      <CardContent className="p-4 sm:py-5">
+        <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `color-mix(in oklch, ${color} 14%, white)` }}>
             <Icon className="w-5 h-5" style={{ color }} />
           </div>
           <div className="min-w-0">
-            <p className="text-[1.75rem] leading-none font-bold tracking-tight tabular-nums" style={{ color: NAVY }}>{value}</p>
+            <p className="text-2xl sm:text-[1.75rem] leading-none font-bold tracking-tight tabular-nums" style={{ color: NAVY }}>{value}</p>
             <p className="text-xs mt-1.5" style={{ color: "oklch(0.55 0.03 240)" }}>{label}</p>
           </div>
         </div>
@@ -1000,7 +1001,23 @@ export default function AdminPanel() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="announcements">
+        {/* ?tab=live opens straight onto Live payments — a bookmark for the
+            door on a rehearsal night. Any other value falls back. */}
+        <Tabs
+          className="scroll-mt-20 md:scroll-mt-6"
+          ref={(el) => {
+            // Opened from a bookmark straight to a tab: scroll it into view
+            // once, so on a phone the feed is on screen rather than below the
+            // banner and the stat tiles.
+            if (el && new URLSearchParams(window.location.search).get("tab") && !(el as any)._scrolled) {
+              (el as any)._scrolled = true;
+              requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
+            }
+          }}
+          defaultValue={(() => {
+          const t = new URLSearchParams(window.location.search).get("tab");
+          return t && ["announcements", "events", "members", "passes", "library", "groups", "live", "orders", "financial", "activity", "email"].includes(t) ? t : "announcements";
+        })()}>
           <TabsList className="flex-wrap h-auto gap-1 p-1.5 rounded-2xl justify-start w-full sm:w-fit [&>*]:flex-none [&>*]:h-9">
             <TabsTrigger value="announcements" className="text-xs"><Megaphone className="w-3.5 h-3.5 mr-1" />Announcements</TabsTrigger>
             <TabsTrigger value="events" className="text-xs"><CalendarDays className="w-3.5 h-3.5 mr-1" />Events</TabsTrigger>
@@ -1008,6 +1025,7 @@ export default function AdminPanel() {
             <TabsTrigger value="passes" className="text-xs"><CreditCard className="w-3.5 h-3.5 mr-1" />Passes</TabsTrigger>
             <TabsTrigger value="library" className="text-xs"><Music className="w-3.5 h-3.5 mr-1" />Library</TabsTrigger>
             <TabsTrigger value="groups" className="text-xs"><MessageSquare className="w-3.5 h-3.5 mr-1" />Groups</TabsTrigger>
+            <TabsTrigger value="live" className="text-xs"><Radio className="w-3.5 h-3.5 mr-1" />Live payments</TabsTrigger>
             <TabsTrigger value="orders" className="text-xs"><BarChart3 className="w-3.5 h-3.5 mr-1" />Orders</TabsTrigger>
             <TabsTrigger value="financial" className="text-xs"><DollarSign className="w-3.5 h-3.5 mr-1" />Financial Members</TabsTrigger>
             <TabsTrigger value="activity" className="text-xs"><History className="w-3.5 h-3.5 mr-1" />Activity Log</TabsTrigger>
@@ -1020,6 +1038,7 @@ export default function AdminPanel() {
             <TabsContent value="passes"><PassesTab /></TabsContent>
             <TabsContent value="library"><LibraryTab /></TabsContent>
             <TabsContent value="groups"><GroupsTab /></TabsContent>
+            <TabsContent value="live"><LivePaymentsTab /></TabsContent>
             <TabsContent value="orders"><OrdersTab /></TabsContent>
             <TabsContent value="financial"><FinancialMembersTab /></TabsContent>
             <TabsContent value="activity"><ActivityLogTab /></TabsContent>

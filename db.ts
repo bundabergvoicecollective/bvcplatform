@@ -4059,3 +4059,76 @@ export async function optOutOfCampaignEmail(userId: number) {
   const [existing] = await db.select({ id: emailOptOuts.id }).from(emailOptOuts).where(eq(emailOptOuts.userId, userId)).limit(1);
   if (!existing) await db.insert(emailOptOuts).values({ userId });
 }
+
+// ─── Live Square payments ────────────────────────────────────────────────────
+
+export type PlatformMatch = {
+  kind: "pass" | "shop" | "stream";
+  userId: number;
+  memberName: string;
+  detail: string;
+  status: string;
+  /** How the platform learned of it: its own checkout, Square's webhook, or a person. */
+  how: "checkout" | "matched" | "by hand";
+};
+
+/**
+ * What the platform already holds for each Square id, payment or order.
+ *
+ * The platform's own checkouts store Square's ORDER id on the order row;
+ * payments matched afterwards — by the webhook, or claimed from a hand entry —
+ * store the PAYMENT id. Shop orders and live-stream tickets do the same in
+ * either of two columns. So every id is looked for in every place, and a
+ * Square payment counts as known if its payment id or its order id turns up.
+ */
+export async function findPlatformRecordsForSquare(ids: string[]): Promise<Map<string, PlatformMatch>> {
+  const found = new Map<string, PlatformMatch>();
+  const wanted = [...new Set(ids.filter(Boolean))];
+  if (!db || !wanted.length) return found;
+
+  const nameOf = (u: { firstName: string | null; lastName: string | null; name: string | null } | null, id: number) =>
+    (u && ([u.firstName, u.lastName].filter(Boolean).join(" ") || u.name)) || `Member #${id}`;
+
+  const passRows = await db
+    .select({
+      a: passOrders.stripeSessionId, b: passOrders.paymentSessionId, userId: passOrders.userId,
+      passType: passOrders.passType, status: passOrders.status, notes: passOrders.notes, channel: passOrders.paymentChannel,
+      firstName: users.firstName, lastName: users.lastName, name: users.name,
+    })
+    .from(passOrders)
+    .leftJoin(users, eq(users.id, passOrders.userId))
+    .where(sql`${passOrders.stripeSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})
+            OR ${passOrders.paymentSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})`);
+  for (const r of passRows) {
+    const m: PlatformMatch = {
+      kind: "pass", userId: r.userId, memberName: nameOf(r, r.userId), detail: r.passType, status: r.status,
+      // Entries made by an admin always carry a payment channel (the "How did
+      // they pay?" answer); the platform's checkout and the webhook never set one.
+      how: r.notes?.startsWith("Matched automatically") ? "matched" : r.channel ? "by hand" : "checkout",
+    };
+    for (const k of [r.a, r.b]) if (k) found.set(k, m);
+  }
+
+  const shopRows = await db
+    .select({ a: shopOrders.stripeSessionId, b: shopOrders.paymentSessionId, userId: shopOrders.userId, status: shopOrders.status, firstName: users.firstName, lastName: users.lastName, name: users.name })
+    .from(shopOrders)
+    .leftJoin(users, eq(users.id, shopOrders.userId))
+    .where(sql`${shopOrders.stripeSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})
+            OR ${shopOrders.paymentSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})`);
+  for (const r of shopRows) {
+    const m: PlatformMatch = { kind: "shop", userId: r.userId, memberName: nameOf(r, r.userId), detail: "Shop order", status: r.status, how: "checkout" };
+    for (const k of [r.a, r.b]) if (k && !found.has(k)) found.set(k, m);
+  }
+
+  const streamRows = await db
+    .select({ a: liveStreamAccess.stripeSessionId, b: liveStreamAccess.paymentSessionId, userId: liveStreamAccess.userId, firstName: users.firstName, lastName: users.lastName, name: users.name })
+    .from(liveStreamAccess)
+    .leftJoin(users, eq(users.id, liveStreamAccess.userId))
+    .where(sql`${liveStreamAccess.stripeSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})
+            OR ${liveStreamAccess.paymentSessionId} IN (${sql.join(wanted.map((w) => sql`${w}`), sql`, `)})`);
+  for (const r of streamRows) {
+    const m: PlatformMatch = { kind: "stream", userId: r.userId, memberName: nameOf(r, r.userId), detail: "Live stream ticket", status: "paid", how: "checkout" };
+    for (const k of [r.a, r.b]) if (k && !found.has(k)) found.set(k, m);
+  }
+  return found;
+}
