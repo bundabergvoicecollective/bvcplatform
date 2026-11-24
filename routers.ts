@@ -100,6 +100,7 @@ import {
   finishEmailCampaign,
   findRecentSquareOrder,
   findPlatformRecordsForSquare,
+  getNotSeenLately,
   recordDoorPayment,
   updateUserProfile,
   listLiveStreams,
@@ -878,6 +879,13 @@ const coreRouter = router({
      * and the dashboard graph. One request rather than one per rehearsal.
      */
     allSessionStats: adminProcedure.query(() => getAllSessionStats()),
+
+    /**
+     * Who to ask about: members holding sessions who have not been ticked at
+     * the last three rehearsals, and members never ticked at all. By name,
+     * which the attendancesweep audit cannot do in a public log. Admin only.
+     */
+    notSeenLately: adminProcedure.query(() => getNotSeenLately(3)),
 
     // Returns all sessions the current user attended (member-facing history)
     myHistory: protectedProcedure.query(({ ctx }) =>

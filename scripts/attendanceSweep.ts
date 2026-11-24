@@ -25,6 +25,7 @@
  * Usage: DATABASE_URL=… tsx scripts/attendanceSweep.ts [--recent=6]
  */
 import mysql from "mysql2/promise";
+import { getNotSeenLately } from "../db";
 
 const RECENT = Number(process.argv.find((a) => a.startsWith("--recent="))?.slice(9) ?? 6);
 
@@ -139,6 +140,22 @@ async function main() {
   );
 
   await conn.end();
+
+  // The same lists as the admin panel's "Not seen lately", from the same
+  // query, so the audit and the screen cannot quietly disagree. Initials only
+  // here; the names are in the app, behind a login.
+  const app = await getNotSeenLately(3);
+  console.log(
+    `\nAdmin panel "Not seen lately" (same query as the app): ${app.quiet.length} holding sessions but not ticked ` +
+      `at ${app.sessions.map((x) => x.date).join(", ")}; ${app.never.length} never ticked.`,
+  );
+  for (const m of app.never) {
+    const ini = m.name.split(/\s+/).filter(Boolean).map((w) => `${w[0].toUpperCase()}.`).join("");
+    console.log(`  never  #${String(m.id).padEnd(8)} ${ini.padEnd(6)} ${m.remaining} left, joined ${m.joined}`);
+  }
+
+  // db.ts opens a connection pool at import, which keeps the process alive.
+  process.exit(0);
   process.exit(0);
 }
 
